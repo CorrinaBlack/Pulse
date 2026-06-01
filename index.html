@@ -1,4 +1,5 @@
-<!-- Pulse v2.6 — 2026-06-01 | Compression: quality-first at full resolution, preserves LCD detail -->
+
+<!-- Pulse v2.8 — 2026-06-01 | Vision prompt: vertical stacking hint + label confirmation -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -826,10 +827,18 @@ async function handleFiles(files) {
  },
  {
  type: 'text',
- text: `Look at this blood pressure monitor image. Reply with ONLY a raw JSON object on a single line, no markdown, no backticks, no explanation before or after. Use this exact format:
+ text: `This is a photo of a blood pressure monitor. Read the values from its LCD display.
+
+Most monitors display three numbers stacked vertically:
+- TOP (largest): Systolic, labeled SYS — typically 70–200
+- MIDDLE: Diastolic, labeled DIA — typically 40–130
+- BOTTOM (smallest): Pulse rate, labeled PUL, PULSE, or a heart icon — typically 40–120
+
+Always confirm by checking the labels (SYS, DIA, PUL/PULSE) printed near each number. Read each digit individually, left to right. Note the device brand name if visible.
+
+Reply with ONLY a raw JSON object, no markdown, no backticks, no extra text:
 {"systolic":120,"diastolic":80,"bpm":72,"device":"Omron"}
-If a value cannot be read, use null for that field. Example with missing BPM:
-{"systolic":118,"diastolic":76,"bpm":null,"device":null}`
+Use null ONLY if a value truly cannot be read.`
  }
  ]
  }]
