@@ -1,5 +1,5 @@
 
-<!-- Pulse v3.6 — 2026-06-01 | Flat async HEIC flow (no File constructor), contrast 2.0 -->
+<!-- Pulse v3.7 — 2026-06-01 | 30s timeout on heic2any to prevent silent hanging -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -895,11 +895,15 @@ async function convertToJpeg(file) {
  if (typeof heic2any === 'undefined') {
  throw new Error('HEIC library not loaded — check internet connection and reload.');
  }
- console.log('Pulse: converting HEIC...');
- let blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+ console.log('Pulse: converting HEIC, file size: ' + (file.size/1e6).toFixed(1) + 'MB...');
+ // Timeout wrapper — heic2any can hang on some files
+ let blob = await Promise.race([
+ heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 }),
+ new Promise((_, rej) => setTimeout(() => rej(new Error('HEIC conversion timed out after 30s — try converting to JPG before uploading')), 30000))
+ ]);
  if (Array.isArray(blob)) blob = blob[0];
+ if (!blob || !blob.size) throw new Error('HEIC conversion produced empty result');
  console.log('Pulse: HEIC converted, blob size: ' + (blob.size/1e6).toFixed(1) + 'MB');
- // Read the converted blob directly as data URL
  dataUrl = await new Promise((res, rej) => {
  const r = new FileReader();
  r.onload = () => res(r.result);
