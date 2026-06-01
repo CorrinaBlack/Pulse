@@ -1,5 +1,5 @@
 
-<!-- Pulse v2.9 — 2026-06-01 | HEIC support via heic2any, finer compression steps (0.04) to preserve LCD detail -->
+<!-- Pulse v3.0 — 2026-06-01 | Chain-of-thought Vision prompt, robust HEIC (heic2any array+fallback) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -818,7 +818,7 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
- max_tokens: 200,
+ max_tokens: 500,
  messages: [{
  role: 'user',
  content: [
@@ -830,16 +830,20 @@ async function handleFiles(files) {
  type: 'text',
  text: `This is a photo of a blood pressure monitor. Read the values from its LCD display.
 
-Most monitors display three numbers stacked vertically:
-- TOP (largest): Systolic, labeled SYS — typically 70–200
-- MIDDLE: Diastolic, labeled DIA — typically 40–130
-- BOTTOM (smallest): Pulse rate, labeled PUL, PULSE, or a heart icon — typically 40–120
+Most monitors show three numbers stacked vertically:
+- TOP (largest): Systolic (labeled SYS), typically 70–200
+- MIDDLE: Diastolic (labeled DIA), typically 40–130
+- BOTTOM (smallest): Pulse rate (labeled PUL, PULSE, or heart icon), typically 40–120
 
-Always confirm by checking the labels (SYS, DIA, PUL/PULSE) printed near each number. Read each digit individually, left to right. Note the device brand name if visible.
+Step by step:
+1. Find and read the SYS number — spell out each digit left to right
+2. Find and read the DIA number — spell out each digit left to right
+3. Find and read the PUL/PULSE number — spell out each digit left to right
+4. Note the device brand if visible
 
-Reply with ONLY a raw JSON object, no markdown, no backticks, no extra text:
+Then on a final line output ONLY a JSON object:
 {"systolic":120,"diastolic":80,"bpm":72,"device":"Omron"}
-Use null ONLY if a value truly cannot be read.`
+Use null only if a value truly cannot be read.`
  }
  ]
  }]
@@ -897,17 +901,23 @@ async function convertToJpeg(file) {
  const MAX_BYTES = 5242880; // API limit is 5MB on the base64 string itself
  const MAX_BASE64 = MAX_BYTES - 50000; // margin for safety
 
- const isHeic = type === 'image/heic' || name.endsWith('.heic');
+ const isHeic = type === 'image/heic' || type === 'image/heif' || type === '' && name.endsWith('.heic') || name.endsWith('.heic');
  const isJpeg = type === 'image/jpeg' || type === 'image/jpg' || name.endsWith('.jpg') || name.endsWith('.jpeg');
  const isPng = type === 'image/png' || name.endsWith('.png');
 
  // Convert HEIC to JPEG blob first using heic2any
  let processFile = file;
  if (isHeic) {
+ if (typeof heic2any === 'undefined') {
+ throw new Error('HEIC support library failed to load. Check your internet connection and try again.');
+ }
  try {
  console.log('Pulse: converting HEIC to JPEG…');
- const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
- processFile = new File([blob], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+ let result = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+ // heic2any may return an array of blobs — use the first one
+ if (Array.isArray(result)) result = result[0];
+ processFile = new File([result], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+ console.log('Pulse: HEIC converted, size: ' + (processFile.size/1e6).toFixed(1) + 'MB');
  } catch(e) {
  throw new Error('HEIC conversion failed: ' + e.message);
  }
