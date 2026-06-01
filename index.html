@@ -1,5 +1,5 @@
 
-<!-- Pulse v3.7 — 2026-06-01 | 30s timeout on heic2any to prevent silent hanging -->
+<!-- Pulse v3.8 — 2026-06-01 | HEIC: try native decode first (Safari), heic2any fallback with 30s timeout -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -889,43 +889,57 @@ async function convertToJpeg(file) {
 
  const isHeic = type === 'image/heic' || type === 'image/heif' || (type === '' && name.endsWith('.heic')) || name.endsWith('.heic');
 
- // Step 1: Get a data URL from the file (with HEIC conversion if needed)
- let dataUrl;
- if (isHeic) {
+ // Step 1: Read file as data URL
+ const rawDataUrl = await new Promise((res, rej) => {
+ const r = new FileReader();
+ r.onload = () => res(r.result);
+ r.onerror = () => rej(new Error('Failed to read file'));
+ r.readAsDataURL(file);
+ });
+
+ // Step 2: Try loading into Image (native decode — works for JPG/PNG always, HEIC on Safari)
+ let dataUrl = rawDataUrl;
+ let img = await new Promise((resolve) => {
+ const i = new Image();
+ i.onload = () => resolve(i);
+ i.onerror = () => resolve(null); // null = native decode failed
+ i.src = rawDataUrl;
+ });
+
+ // Step 3: If native decode failed and it's HEIC, try heic2any conversion
+ if (!img && isHeic) {
+ console.log('Pulse: native HEIC decode failed, trying heic2any...');
  if (typeof heic2any === 'undefined') {
- throw new Error('HEIC library not loaded — check internet connection and reload.');
+ throw new Error('Cannot decode HEIC — try converting to JPG before uploading.');
  }
- console.log('Pulse: converting HEIC, file size: ' + (file.size/1e6).toFixed(1) + 'MB...');
- // Timeout wrapper — heic2any can hang on some files
+ try {
  let blob = await Promise.race([
  heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 }),
- new Promise((_, rej) => setTimeout(() => rej(new Error('HEIC conversion timed out after 30s — try converting to JPG before uploading')), 30000))
+ new Promise((_, rej) => setTimeout(() => rej(new Error(
+ 'HEIC conversion timed out (30s). Please convert to JPG before uploading.'
+ )), 30000))
  ]);
  if (Array.isArray(blob)) blob = blob[0];
  if (!blob || !blob.size) throw new Error('HEIC conversion produced empty result');
- console.log('Pulse: HEIC converted, blob size: ' + (blob.size/1e6).toFixed(1) + 'MB');
+ console.log('Pulse: heic2any converted, blob: ' + (blob.size/1e6).toFixed(1) + 'MB');
  dataUrl = await new Promise((res, rej) => {
  const r = new FileReader();
  r.onload = () => res(r.result);
  r.onerror = () => rej(new Error('Failed to read converted HEIC'));
  r.readAsDataURL(blob);
  });
- } else {
- dataUrl = await new Promise((res, rej) => {
- const r = new FileReader();
- r.onload = () => res(r.result);
- r.onerror = () => rej(new Error('Failed to read image file'));
- r.readAsDataURL(file);
- });
- }
-
- // Step 2: Load into Image element
- const img = await new Promise((res, rej) => {
+ img = await new Promise((resolve, reject) => {
  const i = new Image();
- i.onload = () => res(i);
- i.onerror = () => rej(new Error('Could not decode image'));
+ i.onload = () => resolve(i);
+ i.onerror = () => reject(new Error('Converted HEIC image could not be loaded'));
  i.src = dataUrl;
  });
+ } catch(e) {
+ throw new Error('HEIC failed: ' + e.message);
+ }
+ } else if (!img) {
+ throw new Error('Could not decode image');
+ }
 
  // Step 3: Canvas with grayscale + contrast, then encode
  const natW = img.naturalWidth, natH = img.naturalHeight;
