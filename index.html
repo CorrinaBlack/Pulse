@@ -6,7 +6,7 @@
 <title>Pulse — Blood Pressure Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+
 
 <style>
   :root {
@@ -554,7 +554,7 @@
         <!-- PHOTO TAB -->
         <div id="pane-photo">
           <div class="drop-zone" id="dropZone">
-            <input type="file" accept=".png,.jpg,.jpeg,.heic,image/heic" multiple id="fileInput" onchange="handleFiles(this.files)" />
+            <input type="file" accept="image/*" multiple id="fileInput" />
             <div class="dz-icon">📷</div>
             <p>Drag & drop photos here, or <span>browse to upload</span></p>
             <p class="photo-hint">Up to 10 images · PNG, JPG, JPEG, HEIC · Date/time pulled from photo metadata</p>
@@ -722,13 +722,21 @@ switchTab('photo');
 document.getElementById('m-dt').value = nowLocalISO();
 
 // ─── DRAG & DROP ──────────────────────────────────────────────────────────────
+// ─── FILE INPUT LISTENER ──────────────────────────────────────────────────────
+document.getElementById('fileInput').addEventListener('change', function() {
+  const files = [];
+  for (let i = 0; i < this.files.length; i++) files.push(this.files[i]);
+  this.value = ''; // reset so same file can be picked again
+  handleFiles(files);
+});
+
 const dropZone = document.getElementById('dropZone');
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
-  handleFiles(e.dataTransfer.files);
+  handleFiles(Array.from(e.dataTransfer.files));
 });
 
 // ─── API KEY MANAGEMENT ───────────────────────────────────────────────────────
@@ -779,32 +787,61 @@ async function handleFiles(files) {
     alert('Please add your Gemini API key first — tap ⚙ API Key in the header.');
     return;
   }
-  const allowed = ['image/png','image/jpeg','image/jpg','image/heic'];
-  const list = Array.from(files).filter(f =>
-    allowed.includes(f.type.toLowerCase()) || f.name.toLowerCase().endsWith('.heic')
-  );
-  const toProcess = list.slice(0, 10);
+  const toProcess = files.slice(0, 10);
 
   for (const file of toProcess) {
     const qid = genId();
-    const item = { qid, file, status: 'processing', sys:'', dia:'', bpm:'', dt:'', notes:'' };
+    // Read file to base64 immediately — iOS won't let File objects persist across async gaps
+    let fileData = null;
+    let fileName = file.name || 'image';
+    let fileType = file.type || 'image/jpeg';
+    try {
+      fileData = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        const t = setTimeout(() => reject(new Error('File read timeout')), 10000);
+        reader.onload = e => { clearTimeout(t); resolve(e.target.result); };
+        reader.onerror = () => { clearTimeout(t); reject(new Error('File read error')); };
+        reader.readAsDataURL(file);
+      });
+    } catch(e) {
+      // Show error item and skip
+      ocrQueue.push({ qid, status: 'error', errorMsg: e.message, file: null, sys:'', dia:'', bpm:'', dt: nowLocalISO(), notes:'', device:'' });
+      renderOCRQueue();
+      continue;
+    }
+
+    const item = { qid, fileName, fileType, fileData, status: 'processing', sys:'', dia:'', bpm:'', dt: nowLocalISO(), notes:'', device:'' };
     ocrQueue.push(item);
     renderOCRQueue();
 
-    // Extract EXIF date from metadata
-    const exifDt = await getExifDate(file);
+    // Extract EXIF date from already-read base64 data
+    item.statusMsg = 'Reading image metadata…';
+    renderOCRQueue();
+    const exifDt = await Promise.race([
+      getExifDateFromDataUrl(fileData),
+      new Promise(resolve => setTimeout(() => resolve(null), 3000))
+    ]);
     item.dt = exifDt || nowLocalISO();
 
-    // Send to Claude Vision
+    // Send to Gemini Vision
     try {
-      // Convert image to JPEG via canvas (handles HEIC on Safari/iOS, ensures compatibility)
-      const { base64, mediaType } = await convertToJpeg(file);
+      item.statusMsg = 'Sending to Gemini…';
+      renderOCRQueue();
+
+      const base64 = fileData.split(',')[1];
+      let mediaType = fileType;
+      if (mediaType === 'image/heif') mediaType = 'image/heic';
+      if (!mediaType.startsWith('image/')) mediaType = 'image/jpeg';
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
 
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             contents: [{
               parts: [
@@ -821,6 +858,7 @@ If a value cannot be read, use null for that field. Example with missing BPM:
           })
         }
       );
+      clearTimeout(timeout);
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -841,53 +879,32 @@ If a value cannot be read, use null for that field. Example with missing BPM:
       item.status = 'ready';
     } catch(e) {
       item.status = 'error';
-      item.errorMsg = e.message || 'Unknown error';
+      if (e.name === 'AbortError') {
+        item.errorMsg = 'Request timed out after 30s — check your internet connection and API key';
+      } else {
+        item.errorMsg = e.message || 'Unknown error';
+      }
     }
     renderOCRQueue();
   }
 }
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => resolve(e.target.result.split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
-function convertToJpeg(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' });
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not load image')); };
-    img.src = url;
+function getExifDateFromDataUrl(dataUrl) {
+  return new Promise(resolve => {
+    try {
+      const base64 = dataUrl.split(',')[1];
+      const binary = atob(base64.slice(0, 65536)); // Only need first 64kb for EXIF
+      const match = binary.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+      if (match) {
+        resolve(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}`);
+      } else {
+        resolve(null);
+      }
+    } catch(e) {
+      resolve(null);
+    }
   });
-}
-
-async function getExifDate(file) {
-  try {
-    const exif = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate', 'DateTime']);
-    const dt = exif?.DateTimeOriginal || exif?.CreateDate || exif?.DateTime;
-    if (!dt) return null;
-    // dt is a JS Date object from exifr
-    const d = new Date(dt);
-    if (isNaN(d)) return null;
-    const pad = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch(e) {
-    return null;
-  }
 }
 
 function renderOCRQueue() {
@@ -909,10 +926,10 @@ function renderOCRQueue() {
       <div>
         <div class="ocr-status" style="display:flex;align-items:center;gap:8px">
           ${item.status === 'processing' ? '<div class="spinner"></div>' : '📋'}
-          <span style="color:var(--text2);font-size:13px">${item.file?.name || 'Image'}</span>
+          <span style="color:var(--text2);font-size:13px">${item.fileName || 'Image'}</span>
           ${item.device ? `<span style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${item.device}</span>` : ''}
         </div>
-        ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Analyzing with Gemini Vision…</div>` : ''}
+        ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px"><div class="spinner"></div>${item.statusMsg || 'Analyzing with Gemini Vision…'}</div>` : ''}
         ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
         ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
         ${item.status === 'ready' ? `
