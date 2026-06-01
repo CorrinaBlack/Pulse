@@ -487,14 +487,14 @@
 <div id="apiPanel" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;">
   <div style="max-width:900px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <div style="flex:1;min-width:220px">
-      <label style="font-size:10px;font-family:'DM Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Anthropic API Key</label>
-      <input type="password" id="apiKeyInput" placeholder="sk-ant-…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:8px 12px;outline:none;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+      <label style="font-size:10px;font-family:'DM Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Gemini API Key</label>
+      <input type="password" id="apiKeyInput" placeholder="AIza…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:8px 12px;outline:none;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
     </div>
     <div style="display:flex;gap:8px;align-items:flex-end;padding-top:18px">
       <button class="submit-btn" style="margin-top:0;padding:9px 18px;font-size:13px" onclick="saveApiKey()">Save Key</button>
       <button class="export-btn" onclick="clearApiKey()">Clear</button>
     </div>
-    <div style="font-size:12px;color:var(--text3);flex-basis:100%">🔒 Stored only in your browser's localStorage — never sent anywhere except directly to api.anthropic.com</div>
+    <div style="font-size:12px;color:var(--text3);flex-basis:100%">🔒 Stored only in your browser's localStorage — never sent anywhere except directly to generativelanguage.googleapis.com</div>
   </div>
 </div>
 
@@ -636,6 +636,10 @@
         <label>Notes</label>
         <textarea id="e-notes"></textarea>
       </div>
+      <div class="form-group form-full">
+        <label>Device</label>
+        <input type="text" id="e-device" placeholder="e.g. Omron M3" />
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -728,7 +732,7 @@ dropZone.addEventListener('drop', e => {
 });
 
 // ─── API KEY MANAGEMENT ───────────────────────────────────────────────────────
-const API_KEY_STORAGE = 'pulse_anthropic_key';
+const API_KEY_STORAGE = 'pulse_gemini_key';
 
 function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
 
@@ -772,7 +776,7 @@ setTimeout(updateApiKeyBtn, 100);
 async function handleFiles(files) {
   const apiKey = getApiKey();
   if (!apiKey) {
-    alert('Please add your Anthropic API key first — tap ⚙ API Key in the header.');
+    alert('Please add your Gemini API key first — tap ⚙ API Key in the header.');
     return;
   }
   const allowed = ['image/png','image/jpeg','image/jpg','image/heic'];
@@ -796,35 +800,27 @@ async function handleFiles(files) {
       // Convert image to JPEG via canvas (handles HEIC on Safari/iOS, ensures compatibility)
       const { base64, mediaType } = await convertToJpeg(file);
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 200,
-          messages: [{
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: { type: 'base64', media_type: mediaType, data: base64 }
-              },
-              {
-                type: 'text',
-                text: `Look at this blood pressure monitor image. Reply with ONLY a raw JSON object on a single line, no markdown, no backticks, no explanation before or after. Use this exact format:
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inline_data: { mime_type: mediaType, data: base64 } },
+                {
+                  text: `Look at this blood pressure monitor image. Reply with ONLY a raw JSON object on a single line, no markdown, no backticks, no explanation before or after. Use this exact format:
 {"systolic":120,"diastolic":80,"bpm":72,"device":"Omron"}
 If a value cannot be read, use null for that field. Example with missing BPM:
 {"systolic":118,"diastolic":76,"bpm":null,"device":null}`
-              }
-            ]
-          }]
-        })
-      });
+                }
+              ]
+            }],
+            generationConfig: { temperature: 0, maxOutputTokens: 200 }
+          })
+        }
+      );
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -832,10 +828,9 @@ If a value cannot be read, use null for that field. Example with missing BPM:
       }
 
       const data = await response.json();
-      const text = data.content?.find(b => b.type === 'text')?.text || '';
-      // Try to extract JSON even if wrapped in extra text
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       const jsonMatch = text.match(/\{[\s\S]*?\}/);
-      if (!jsonMatch) throw new Error('No JSON found. Claude said: "' + text.slice(0, 300) + '"');
+      if (!jsonMatch) throw new Error('No JSON found. Gemini said: "' + text.slice(0, 300) + '"');
       let parsed;
       try { parsed = JSON.parse(jsonMatch[0]); }
       catch(pe) { throw new Error('JSON parse failed: ' + jsonMatch[0].slice(0, 200)); }
@@ -917,7 +912,7 @@ function renderOCRQueue() {
           <span style="color:var(--text2);font-size:13px">${item.file?.name || 'Image'}</span>
           ${item.device ? `<span style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${item.device}</span>` : ''}
         </div>
-        ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Analyzing with Claude Vision…</div>` : ''}
+        ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Analyzing with Gemini Vision…</div>` : ''}
         ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
         ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
         ${item.status === 'ready' ? `
@@ -927,6 +922,7 @@ function renderOCRQueue() {
           <div class="ocr-field"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
           <div class="ocr-field"><label>Date &amp; Time</label><input type="datetime-local" value="${item.dt}" onchange="updateOCR('${item.qid}','dt',this.value)" style="width:175px"></div>
           <div class="ocr-field ocr-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+          <div class="ocr-field" style="min-width:140px"><label>Device</label><input type="text" value="${item.device||''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron" style="width:140px"></div>
         </div>` : ''}
       </div>
       <div class="ocr-actions">
@@ -959,7 +955,7 @@ function commitItem(qid) {
   const item = ocrQueue.find(i => i.qid === qid);
   if (!item) return;
   if (!item.sys || !item.dia) { alert('Please enter at least systolic and diastolic values.'); return; }
-  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, dt: item.dt, notes: item.notes });
+  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, dt: item.dt, notes: item.notes, device: item.device||'' });
   ocrQueue = ocrQueue.filter(i => i.qid !== qid);
   renderOCRQueue();
   renderData();
@@ -969,7 +965,7 @@ function commitAll() {
   const ready = ocrQueue.filter(i => i.status === 'ready');
   ready.forEach(item => {
     if (item.sys && item.dia) {
-      saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, dt: item.dt, notes: item.notes });
+      saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, dt: item.dt, notes: item.notes, device: item.device||'' });
     }
   });
   ocrQueue = ocrQueue.filter(i => i.status !== 'ready');
@@ -998,10 +994,10 @@ function checkDuplicate(dt) {
   return records.some(r => r.dt === dt);
 }
 
-function saveRecord({ sys, dia, bpm, dt, notes }) {
+function saveRecord({ sys, dia, bpm, dt, notes, device }) {
   const existing = records.findIndex(r => r.dt === dt);
   if (existing >= 0) { records.splice(existing, 1); }
-  records.push({ id: genId(), sys, dia, bpm, dt, notes: notes || '' });
+  records.push({ id: genId(), sys, dia, bpm, dt, notes: notes || '', device: device || '' });
   records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
   saveData(records);
 }
@@ -1075,6 +1071,7 @@ function renderData() {
             <th>Diastolic</th>
             <th>BPM</th>
             <th>Notes</th>
+            <th>Device</th>
             <th>Category</th>
             <th></th>
           </tr>
@@ -1118,6 +1115,7 @@ function renderTable(filtered) {
       <td class="mono">${r.dia}</td>
       <td class="mono">${r.bpm||'—'}</td>
       <td style="color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.notes||'—'}</td>
+      <td style="color:var(--text2);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.device||'—'}</td>
       <td><span class="bp-badge" style="background:${cat.color}22;color:${cat.color}">${cat.label}</span></td>
       <td><div class="td-actions">
         <button class="act-btn act-edit" onclick="openEdit('${r.id}')">Edit</button>
@@ -1251,6 +1249,7 @@ function openEdit(id) {
   document.getElementById('e-bpm').value = r.bpm || '';
   document.getElementById('e-dt').value = r.dt;
   document.getElementById('e-notes').value = r.notes || '';
+  document.getElementById('e-device').value = r.device || '';
   document.getElementById('editModal').classList.add('open');
 }
 
@@ -1267,6 +1266,7 @@ function saveEdit() {
   r.bpm = +document.getElementById('e-bpm').value || null;
   r.dt  = document.getElementById('e-dt').value;
   r.notes = document.getElementById('e-notes').value.trim();
+  r.device = document.getElementById('e-device').value.trim();
   records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
   saveData(records);
   closeModal();
@@ -1288,7 +1288,7 @@ document.getElementById('editModal').addEventListener('click', function(e) {
 // ─── EXPORT CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
   if (records.length === 0) { alert('No data to export.'); return; }
-  const header = ['Date','Time','Systolic','Diastolic','BPM','Category','Notes'];
+  const header = ['Date','Time','Systolic','Diastolic','BPM','Category','Device','Notes'];
   const rows = records.map(r => {
     const d = new Date(r.dt);
     const cat = bpCategory(r.sys, r.dia);
@@ -1296,6 +1296,7 @@ function exportCSV() {
       d.toLocaleDateString('en-US'),
       d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
       r.sys, r.dia, r.bpm||'', cat.label,
+      '"' + (r.device||'').replace(/"/g,'""') + '"',
       '"' + (r.notes||'').replace(/"/g,'""') + '"'
     ].join(',');
   });
