@@ -1,4 +1,4 @@
-<!-- Pulse v2.5 — 2026-06-01 | Fixed MAX_BASE64 calc: API limit is on base64 string length, not decoded bytes -->
+<!-- Pulse v2.6 — 2026-06-01 | Compression: quality-first at full resolution, preserves LCD detail -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -900,19 +900,19 @@ async function convertToJpeg(file) {
  console.log(`Pulse: image too large (${(base64.length/1e6).toFixed(1)}MB base64), compressing…`);
  }
 
- // Compress via canvas — for oversized images and HEIC
+ // Compress via canvas — prioritize quality at full resolution to preserve LCD detail
  return new Promise((resolve, reject) => {
  const reader = new FileReader();
  reader.onload = () => {
  const img = new Image();
  img.onload = () => {
  try {
- let maxDim = 1600;
- let b64;
- // Outer loop: try progressively smaller dimensions
- for (let attempt = 0; attempt < 3; attempt++) {
- let w = img.naturalWidth, h = img.naturalHeight;
- if (w > maxDim || h > maxDim) {
+ const natW = img.naturalWidth, natH = img.naturalHeight;
+ // Try full resolution first, then progressively smaller
+ const dimSteps = [Math.max(natW, natH), 2400, 1600, 1000];
+ for (const maxDim of dimSteps) {
+ let w = natW, h = natH;
+ if (Math.max(w, h) > maxDim) {
  const scale = maxDim / Math.max(w, h);
  w = Math.round(w * scale);
  h = Math.round(h * scale);
@@ -922,21 +922,23 @@ async function convertToJpeg(file) {
  canvas.height = h;
  const ctx = canvas.getContext('2d');
  ctx.drawImage(img, 0, 0, w, h);
- // Inner loop: step down quality
- for (let q = 0.80; q >= 0.1; q -= 0.1) {
+ for (let q = 0.90; q >= 0.15; q -= 0.10) {
  const dataUrl = canvas.toDataURL('image/jpeg', q);
- b64 = dataUrl.split(',')[1];
+ const b64 = dataUrl.split(',')[1];
  if (b64.length <= MAX_BASE64) {
- console.log(`Pulse: compressed to ${(b64.length/1e6).toFixed(1)}MB base64, q=${q.toFixed(1)}, ${w}×${h}`);
+ console.log(`Pulse: compressed to ${(b64.length/1e6).toFixed(1)}MB base64, q=${q.toFixed(2)}, ${w}×${h}`);
  return resolve({ base64: b64, mediaType: 'image/jpeg' });
  }
  }
- // Still too big — shrink dimensions and retry
- maxDim = Math.round(maxDim * 0.65);
- console.log(`Pulse: still too large after quality sweep, retrying at ${maxDim}px max…`);
+ console.log(`Pulse: ${w}×${h} still too large at min quality, scaling down…`);
  }
- // Last resort: return whatever we have
- resolve({ base64: b64, mediaType: 'image/jpeg' });
+ // Last resort
+ const canvas = document.createElement('canvas');
+ canvas.width = 800; canvas.height = Math.round(800 * natH / natW);
+ const ctx = canvas.getContext('2d');
+ ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+ const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+ resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' });
  } catch(e) { reject(new Error('Canvas conversion failed: ' + e.message)); }
  };
  img.onerror = () => reject(new Error('Could not decode image — HEIC files require Safari or iOS'));
