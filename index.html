@@ -1,5 +1,5 @@
 
-<!-- Pulse v2.8 — 2026-06-01 | Vision prompt: vertical stacking hint + label confirmation -->
+<!-- Pulse v2.9 — 2026-06-01 | HEIC support via heic2any, finer compression steps (0.04) to preserve LCD detail -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 
 <style>
  :root {
@@ -896,20 +897,33 @@ async function convertToJpeg(file) {
  const MAX_BYTES = 5242880; // API limit is 5MB on the base64 string itself
  const MAX_BASE64 = MAX_BYTES - 50000; // margin for safety
 
+ const isHeic = type === 'image/heic' || name.endsWith('.heic');
  const isJpeg = type === 'image/jpeg' || type === 'image/jpg' || name.endsWith('.jpg') || name.endsWith('.jpeg');
  const isPng = type === 'image/png' || name.endsWith('.png');
- const isStandard = isJpeg || isPng;
+
+ // Convert HEIC to JPEG blob first using heic2any
+ let processFile = file;
+ if (isHeic) {
+ try {
+ console.log('Pulse: converting HEIC to JPEG…');
+ const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+ processFile = new File([blob], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+ } catch(e) {
+ throw new Error('HEIC conversion failed: ' + e.message);
+ }
+ }
 
  // For standard formats under the limit, fast-path with no conversion
- if (isStandard) {
- const base64 = await fileToBase64(file);
+ if (isJpeg || isPng || isHeic) {
+ const base64 = await fileToBase64(processFile);
+ const mt = (isPng && !isHeic) ? 'image/png' : 'image/jpeg';
  if (base64.length <= MAX_BASE64) {
- return { base64, mediaType: isJpeg ? 'image/jpeg' : 'image/png' };
+ return { base64, mediaType: mt };
  }
- console.log(`Pulse: image too large (${(base64.length/1e6).toFixed(1)}MB base64), compressing…`);
+ console.log('Pulse: image too large (' + (base64.length/1e6).toFixed(1) + 'MB base64), compressing…');
  }
 
- // Compress via canvas — prioritize quality at full resolution to preserve LCD detail
+ // Compress via canvas — use finest quality steps to minimize degradation
  return new Promise((resolve, reject) => {
  const reader = new FileReader();
  reader.onload = () => {
@@ -917,7 +931,7 @@ async function convertToJpeg(file) {
  img.onload = () => {
  try {
  const natW = img.naturalWidth, natH = img.naturalHeight;
- // Try full resolution first, then progressively smaller
+ // Try full resolution first with fine quality steps, then scale down
  const dimSteps = [Math.max(natW, natH), 2400, 1600, 1000];
  for (const maxDim of dimSteps) {
  let w = natW, h = natH;
@@ -931,15 +945,16 @@ async function convertToJpeg(file) {
  canvas.height = h;
  const ctx = canvas.getContext('2d');
  ctx.drawImage(img, 0, 0, w, h);
- for (let q = 0.90; q >= 0.15; q -= 0.10) {
+ // Fine steps: 0.96, 0.92, 0.88, 0.84, … down to 0.20
+ for (let q = 0.96; q >= 0.18; q -= 0.04) {
  const dataUrl = canvas.toDataURL('image/jpeg', q);
  const b64 = dataUrl.split(',')[1];
  if (b64.length <= MAX_BASE64) {
- console.log(`Pulse: compressed to ${(b64.length/1e6).toFixed(1)}MB base64, q=${q.toFixed(2)}, ${w}×${h}`);
+ console.log('Pulse: compressed to ' + (b64.length/1e6).toFixed(1) + 'MB base64, q=' + q.toFixed(2) + ', ' + w + '×' + h);
  return resolve({ base64: b64, mediaType: 'image/jpeg' });
  }
  }
- console.log(`Pulse: ${w}×${h} still too large at min quality, scaling down…`);
+ console.log('Pulse: ' + w + '×' + h + ' still too large at min quality, scaling down…');
  }
  // Last resort
  const canvas = document.createElement('canvas');
@@ -950,11 +965,11 @@ async function convertToJpeg(file) {
  resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' });
  } catch(e) { reject(new Error('Canvas conversion failed: ' + e.message)); }
  };
- img.onerror = () => reject(new Error('Could not decode image — HEIC files require Safari or iOS'));
+ img.onerror = () => reject(new Error('Could not decode image'));
  img.src = reader.result;
  };
  reader.onerror = () => reject(new Error('Could not read file'));
- reader.readAsDataURL(file);
+ reader.readAsDataURL(processFile);
  });
 }
 
