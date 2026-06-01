@@ -1,5 +1,5 @@
 
-<!-- Pulse v3.0 — 2026-06-01 | Chain-of-thought Vision prompt, robust HEIC (heic2any array+fallback) -->
+<!-- Pulse v3.1 — 2026-06-01 | Minimal prompt + temperature:0 + system message for Vision OCR -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -818,7 +818,9 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
- max_tokens: 500,
+ max_tokens: 200,
+ temperature: 0,
+ system: 'You read blood pressure monitors. Given a photo, return ONLY a JSON object with the readings: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Use null if a value is not visible. No other text.',
  messages: [{
  role: 'user',
  content: [
@@ -828,22 +830,7 @@ async function handleFiles(files) {
  },
  {
  type: 'text',
- text: `This is a photo of a blood pressure monitor. Read the values from its LCD display.
-
-Most monitors show three numbers stacked vertically:
-- TOP (largest): Systolic (labeled SYS), typically 70–200
-- MIDDLE: Diastolic (labeled DIA), typically 40–130
-- BOTTOM (smallest): Pulse rate (labeled PUL, PULSE, or heart icon), typically 40–120
-
-Step by step:
-1. Find and read the SYS number — spell out each digit left to right
-2. Find and read the DIA number — spell out each digit left to right
-3. Find and read the PUL/PULSE number — spell out each digit left to right
-4. Note the device brand if visible
-
-Then on a final line output ONLY a JSON object:
-{"systolic":120,"diastolic":80,"bpm":72,"device":"Omron"}
-Use null only if a value truly cannot be read.`
+ text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.'
  }
  ]
  }]
