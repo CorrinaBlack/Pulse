@@ -1,4 +1,5 @@
-<!-- Pulse v3.5 — 2026-06-01 | Grayscale + high contrast(2.5) for all images, cleaner HEIC pipeline -->
+
+<!-- Pulse v3.6 — 2026-06-01 | Flat async HEIC flow (no File constructor), contrast 2.0 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -888,33 +889,43 @@ async function convertToJpeg(file) {
 
  const isHeic = type === 'image/heic' || type === 'image/heif' || (type === '' && name.endsWith('.heic')) || name.endsWith('.heic');
 
- // Step 1: Convert HEIC to JPEG first
- let processFile = file;
+ // Step 1: Get a data URL from the file (with HEIC conversion if needed)
+ let dataUrl;
  if (isHeic) {
  if (typeof heic2any === 'undefined') {
- throw new Error('HEIC support library failed to load. Check your internet connection and try again.');
+ throw new Error('HEIC library not loaded — check internet connection and reload.');
  }
- try {
- console.log('Pulse: converting HEIC to JPEG...');
- let result = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
- if (Array.isArray(result)) result = result[0];
- processFile = new File([result], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
- console.log('Pulse: HEIC converted to JPEG, size: ' + (processFile.size/1e6).toFixed(1) + 'MB');
- } catch(e) {
- console.error('Pulse: heic2any error:', e);
- throw new Error('HEIC conversion failed: ' + e.message);
- }
+ console.log('Pulse: converting HEIC...');
+ let blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+ if (Array.isArray(blob)) blob = blob[0];
+ console.log('Pulse: HEIC converted, blob size: ' + (blob.size/1e6).toFixed(1) + 'MB');
+ // Read the converted blob directly as data URL
+ dataUrl = await new Promise((res, rej) => {
+ const r = new FileReader();
+ r.onload = () => res(r.result);
+ r.onerror = () => rej(new Error('Failed to read converted HEIC'));
+ r.readAsDataURL(blob);
+ });
+ } else {
+ dataUrl = await new Promise((res, rej) => {
+ const r = new FileReader();
+ r.onload = () => res(r.result);
+ r.onerror = () => rej(new Error('Failed to read image file'));
+ r.readAsDataURL(file);
+ });
  }
 
- // Step 2: Load into canvas, apply grayscale + high contrast, encode
- return new Promise((resolve, reject) => {
- const reader = new FileReader();
- reader.onload = () => {
- const img = new Image();
- img.onload = () => {
- try {
+ // Step 2: Load into Image element
+ const img = await new Promise((res, rej) => {
+ const i = new Image();
+ i.onload = () => res(i);
+ i.onerror = () => rej(new Error('Could not decode image'));
+ i.src = dataUrl;
+ });
+
+ // Step 3: Canvas with grayscale + contrast, then encode
  const natW = img.naturalWidth, natH = img.naturalHeight;
- console.log('Pulse: loaded image ' + natW + 'x' + natH);
+ console.log('Pulse: image loaded ' + natW + 'x' + natH);
  const dimSteps = [Math.max(natW, natH), 3200, 2400, 1600, 1200];
 
  for (const maxDim of dimSteps) {
@@ -929,20 +940,17 @@ async function convertToJpeg(file) {
  canvas.height = h;
  const ctx = canvas.getContext('2d');
 
- // Grayscale + high contrast: works for ALL LCD types
- // Removes color confusion (blue/green/red LCDs) and maximizes digit visibility
- ctx.filter = 'grayscale(1) contrast(2.5)';
+ // Grayscale removes LCD color issues, contrast makes digits pop
+ ctx.filter = 'grayscale(1) contrast(2.0)';
  ctx.drawImage(img, 0, 0, w, h);
  ctx.filter = 'none';
 
- console.log('Pulse: processed ' + w + 'x' + h + ' grayscale+contrast');
-
- // Try PNG lossless first
+ // Try PNG lossless
  const pngUrl = canvas.toDataURL('image/png');
  const pngB64 = pngUrl.split(',')[1];
  if (pngB64.length <= MAX_BASE64) {
  console.log('Pulse: PNG ' + (pngB64.length/1e6).toFixed(1) + 'MB, ' + w + 'x' + h);
- return resolve({ base64: pngB64, mediaType: 'image/png' });
+ return { base64: pngB64, mediaType: 'image/png' };
  }
 
  // Try WebP
@@ -951,17 +959,17 @@ async function convertToJpeg(file) {
  const webpB64 = webpUrl.split(',')[1];
  if (webpB64.length <= MAX_BASE64) {
  console.log('Pulse: WebP ' + (webpB64.length/1e6).toFixed(1) + 'MB, ' + w + 'x' + h);
- return resolve({ base64: webpB64, mediaType: 'image/webp' });
+ return { base64: webpB64, mediaType: 'image/webp' };
  }
  }
 
  // JPEG quality sweep
  for (let q = 0.96; q >= 0.18; q -= 0.04) {
- const dataUrl = canvas.toDataURL('image/jpeg', q);
- const b64 = dataUrl.split(',')[1];
+ const jpgUrl = canvas.toDataURL('image/jpeg', q);
+ const b64 = jpgUrl.split(',')[1];
  if (b64.length <= MAX_BASE64) {
  console.log('Pulse: JPEG q=' + q.toFixed(2) + ' ' + (b64.length/1e6).toFixed(1) + 'MB, ' + w + 'x' + h);
- return resolve({ base64: b64, mediaType: 'image/jpeg' });
+ return { base64: b64, mediaType: 'image/jpeg' };
  }
  }
  console.log('Pulse: ' + w + 'x' + h + ' too large, scaling down...');
@@ -971,18 +979,10 @@ async function convertToJpeg(file) {
  const c = document.createElement('canvas');
  c.width = 800; c.height = Math.round(800 * natH / natW);
  const cx = c.getContext('2d');
- cx.filter = 'grayscale(1) contrast(2.5)';
+ cx.filter = 'grayscale(1) contrast(2.0)';
  cx.drawImage(img, 0, 0, c.width, c.height);
  const du = c.toDataURL('image/jpeg', 0.5);
- resolve({ base64: du.split(',')[1], mediaType: 'image/jpeg' });
- } catch(e) { reject(new Error('Canvas conversion failed: ' + e.message)); }
- };
- img.onerror = () => reject(new Error('Could not decode image after conversion'));
- img.src = reader.result;
- };
- reader.onerror = () => reject(new Error('Could not read file'));
- reader.readAsDataURL(processFile);
- });
+ return { base64: du.split(',')[1], mediaType: 'image/jpeg' };
 }
 
 async function getExifDate(file) {
