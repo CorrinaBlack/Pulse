@@ -1,5 +1,5 @@
 
-<!-- Pulse v4.3 — 2026-06-02 | Moved heic-to to end of body, restored main tag -->
+<!-- Pulse v4.4 — 2026-06-02 | Inline API Key button handler to bypass function scoping issues -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -480,7 +480,7 @@
 <header>
  <div class="logo">pul<span>se</span></div>
  <div style="display:flex;gap:8px;align-items:center">
- <button class="export-btn" id="apiKeyBtn" onclick="toggleApiPanel()">⚙ API Key</button>
+ <button class="export-btn" id="apiKeyBtn" onclick="var p=document.getElementById('apiPanel');p.style.display=p.style.display==='none'?'block':'none';">⚙ API Key</button>
  <button class="export-btn" onclick="exportCSV()">↓ Export CSV</button>
  </div>
 </header>
