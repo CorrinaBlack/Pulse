@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.3 — 2026-06-02 | OCR header row (filename + date + time + device), entry stays open until queue empty -->
+<!-- Pulse v5.4 — 2026-06-02 | top_k:1 for determinism, retry-on-null without preprocessing, HEIC validation -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -941,6 +941,7 @@ async function handleFiles(files) {
  body: JSON.stringify({
  model: 'claude-opus-4-7',
  max_tokens: 200,
+ top_k: 1,
  system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
  messages: [{
  role: 'user',
@@ -978,6 +979,8 @@ async function handleFiles(files) {
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
  max_tokens: 100,
+ temperature: 0,
+ top_k: 1,
  system: 'Return ONLY a JSON object with the bounding box of the LCD/digital display screen showing the blood pressure numbers. Use percentage coordinates (0-100): {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
  messages: [{
  role: 'user',
@@ -1013,8 +1016,23 @@ async function handleFiles(files) {
  // PASS 2: Send cropped (or full) image with grayscale + contrast preprocessing to Opus 4.7
  console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (crop ? ' (cropped)' : ' (full)'));
  const encoded = renderRegion(crop, 'grayscale(1) contrast(1.5) brightness(1.05)', OPUS_MAX_DIM);
- console.log('Pulse: sending ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
- const parsed = await callOCR(encoded);
+ console.log('Pulse: attempt 1 — ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
+ let parsed = await callOCR(encoded);
+
+ // Retry without preprocessing if any value is null (catches cases where grayscale loses needed info)
+ if (parsed.systolic == null || parsed.diastolic == null || parsed.bpm == null) {
+ console.log('Pulse: null value detected, retrying without preprocessing (original colors)');
+ const encoded2 = renderRegion(crop, null, OPUS_MAX_DIM);
+ console.log('Pulse: attempt 2 — ' + (encoded2.b64.length/1e6).toFixed(1) + 'MB ' + encoded2.type + ' at ' + encoded2.w + 'x' + encoded2.h);
+ const retry = await callOCR(encoded2);
+ // Merge: prefer non-null from either attempt
+ parsed = {
+ systolic: parsed.systolic != null ? parsed.systolic : retry.systolic,
+ diastolic: parsed.diastolic != null ? parsed.diastolic : retry.diastolic,
+ bpm: parsed.bpm != null ? parsed.bpm : retry.bpm,
+ device: parsed.device || retry.device
+ };
+ }
 
  item.sys = parsed.systolic != null ? String(parsed.systolic) : '';
  item.dia = parsed.diastolic != null ? String(parsed.diastolic) : '';
@@ -1084,6 +1102,7 @@ async function loadImage(file) {
  ]);
  if (Array.isArray(blob)) blob = blob[0];
  if (!blob || !blob.size) throw new Error('HEIC conversion produced empty result');
+ if (blob.size < 1000) throw new Error('HEIC conversion produced suspiciously small blob (' + blob.size + ' bytes) — possibly corrupted');
  console.log('Pulse: HeicTo done, ' + (blob.size/1e6).toFixed(1) + 'MB');
  dataUrl = await new Promise((res, rej) => {
  const r = new FileReader();
@@ -1093,10 +1112,15 @@ async function loadImage(file) {
  });
  img = await new Promise((resolve, reject) => {
  const i = new Image();
- i.onload = () => resolve(i);
- i.onerror = () => reject(new Error('Converted HEIC could not be loaded'));
+ const timer = setTimeout(() => reject(new Error('Converted HEIC image load timed out after 10s')), 10000);
+ i.onload = () => { clearTimeout(timer); resolve(i); };
+ i.onerror = () => { clearTimeout(timer); reject(new Error('Converted HEIC could not be loaded')); };
  i.src = dataUrl;
  });
+ if (!img.naturalWidth || !img.naturalHeight) {
+ throw new Error('Converted HEIC has zero dimensions — conversion may have failed silently');
+ }
+ console.log('Pulse: HEIC image loaded ' + img.naturalWidth + 'x' + img.naturalHeight);
  } else if (!img) {
  throw new Error('Could not decode image');
  }
