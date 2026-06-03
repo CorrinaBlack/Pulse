@@ -1,5 +1,5 @@
 
-<!-- Pulse v4.8 — 2026-06-02 | Removed deprecated temperature param for Opus 4.7 -->
+<!-- Pulse v5.0 — 2026-06-02 | Always apply grayscale + contrast preprocessing before Opus 4.7 OCR -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -822,36 +822,31 @@ async function handleFiles(files) {
  w = Math.round(w * s);
  h = Math.round(h * s);
  }
- const ocrCanvas = document.createElement('canvas');
- ocrCanvas.width = w;
- ocrCanvas.height = h;
- const octx = ocrCanvas.getContext('2d');
- octx.imageSmoothingQuality = 'high';
- octx.drawImage(img, 0, 0, w, h);
- console.log('Pulse: sending full image at ' + w + 'x' + h + ' to Opus 4.7');
-
- // Encode — prefer PNG for sharpness, fall back to JPEG
- let ocrB64, ocrType;
- const pngUrl = ocrCanvas.toDataURL('image/png');
- const pngB64 = pngUrl.split(',')[1];
- if (pngB64.length <= MAX_BASE64) {
- ocrB64 = pngB64; ocrType = 'image/png';
- console.log('Pulse: sending PNG ' + (pngB64.length/1e6).toFixed(1) + 'MB');
- } else {
+// Helper: render image with optional filter and encode for API
+ const renderAndEncode = (filterCss) => {
+ const c = document.createElement('canvas');
+ c.width = w;
+ c.height = h;
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ if (filterCss) cx.filter = filterCss;
+ cx.drawImage(img, 0, 0, w, h);
+ cx.filter = 'none';
+ // Prefer PNG, fall back to JPEG quality sweep
+ const pUrl = c.toDataURL('image/png');
+ const pB64 = pUrl.split(',')[1];
+ if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png' };
  for (let q = 0.96; q >= 0.18; q -= 0.04) {
- const jpgUrl = ocrCanvas.toDataURL('image/jpeg', q);
- const b64 = jpgUrl.split(',')[1];
- if (b64.length <= MAX_BASE64) {
- ocrB64 = b64; ocrType = 'image/jpeg';
- console.log('Pulse: sending JPEG q=' + q.toFixed(2) + ' ' + (b64.length/1e6).toFixed(1) + 'MB');
- break;
+ const jUrl = c.toDataURL('image/jpeg', q);
+ const b64 = jUrl.split(',')[1];
+ if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg' };
  }
- }
- }
- if (!ocrB64) throw new Error('Could not compress image small enough');
+ throw new Error('Could not compress image small enough');
+ };
 
- console.log('Pulse: reading values...');
- const ocrResp = await fetch('https://api.anthropic.com/v1/messages', {
+ // Helper: call Opus 4.7 and parse the JSON response
+ const callOCR = async (encoded) => {
+ const resp = await fetch('https://api.anthropic.com/v1/messages', {
  method: 'POST',
  headers: {
  'Content-Type': 'application/json',
@@ -866,25 +861,29 @@ async function handleFiles(files) {
  messages: [{
  role: 'user',
  content: [
- { type: 'image', source: { type: 'base64', media_type: ocrType, data: ocrB64 } },
+ { type: 'image', source: { type: 'base64', media_type: encoded.type, data: encoded.b64 } },
  { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.' }
  ]
  }]
  })
  });
-
- if (!ocrResp.ok) {
- const err = await ocrResp.json().catch(() => ({}));
- throw new Error('API ' + ocrResp.status + ': ' + (err?.error?.message || JSON.stringify(err).slice(0,200)));
+ if (!resp.ok) {
+ const err = await resp.json().catch(() => ({}));
+ throw new Error('API ' + resp.status + ': ' + (err?.error?.message || JSON.stringify(err).slice(0,200)));
  }
+ const respData = await resp.json();
+ const respText = respData.content?.find(b => b.type === 'text')?.text || '';
+ const m = respText.match(/\{[\s\S]*?\}/);
+ if (!m) throw new Error('No JSON found. Claude said: "' + respText.slice(0, 300) + '"');
+ return JSON.parse(m[0]);
+ };
 
- const data = await ocrResp.json();
- const text = data.content?.find(b => b.type === 'text')?.text || '';
- const jsonMatch = text.match(/\{[\s\S]*?\}/);
- if (!jsonMatch) throw new Error('No JSON found. Claude said: "' + text.slice(0, 300) + '"');
- let parsed;
- try { parsed = JSON.parse(jsonMatch[0]); }
- catch(pe) { throw new Error('JSON parse failed: ' + jsonMatch[0].slice(0, 200)); }
+ // First attempt: with grayscale + contrast preprocessing applied to all images
+ console.log('Pulse: rendering with grayscale + contrast preprocessing');
+ const encoded = renderAndEncode('grayscale(1) contrast(1.5) brightness(1.05)');
+ console.log('Pulse: sending ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type);
+ const parsed = await callOCR(encoded);
+
  item.sys = parsed.systolic != null ? String(parsed.systolic) : '';
  item.dia = parsed.diastolic != null ? String(parsed.diastolic) : '';
  item.bpm = parsed.bpm != null ? String(parsed.bpm) : '';
