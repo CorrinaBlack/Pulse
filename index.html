@@ -1,5 +1,5 @@
 
-<!-- Pulse v4.4 — 2026-06-02 | Inline API Key button handler to bypass function scoping issues -->
+<!-- Pulse v4.5 — 2026-06-02 | 2x upscale cropped LCD, no grayscale, 40s overall timeout for HEIC -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -803,7 +803,12 @@ async function handleFiles(files) {
 
  // Two-pass Vision: 1) find LCD bounding box, 2) crop & OCR
  try {
- const { img, dataUrl } = await loadImage(file);
+ // Overall 40s timeout — catches HEIC conversion hangs
+ const loadPromise = loadImage(file);
+ const timeoutPromise = new Promise((_, rej) =>
+ setTimeout(() => rej(new Error('Image processing timed out. For HEIC files, please convert to JPG first (on iPhone: Settings → Camera → Formats → Most Compatible).')), 40000)
+ );
+ const { img, dataUrl } = await Promise.race([loadPromise, timeoutPromise]);
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
  // Encode full image for pass 1 (just needs to be readable, not perfect)
@@ -873,13 +878,17 @@ async function handleFiles(files) {
 
  // PASS 2: Crop, enhance, and OCR
  const MAX_BASE64 = 5242880 - 50000;
+ // Upscale cropped region 2x for sharper LCD digits
+ const scale = Math.min(2, 4000 / Math.max(cropW, cropH)); // cap at 4000px
  const ocrCanvas = document.createElement('canvas');
- ocrCanvas.width = cropW;
- ocrCanvas.height = cropH;
+ ocrCanvas.width = Math.round(cropW * scale);
+ ocrCanvas.height = Math.round(cropH * scale);
  const octx = ocrCanvas.getContext('2d');
- octx.filter = 'grayscale(1) contrast(2.0)';
- octx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+ octx.imageSmoothingEnabled = false; // nearest-neighbor for crisp LCD edges
+ octx.filter = 'contrast(2.2) brightness(1.1)';
+ octx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, ocrCanvas.width, ocrCanvas.height);
  octx.filter = 'none';
+ console.log('Pulse: cropped ' + cropW + 'x' + cropH + ' → upscaled to ' + ocrCanvas.width + 'x' + ocrCanvas.height);
 
  // Encode cropped image — try PNG first, then JPEG
  let ocrB64, ocrType;
