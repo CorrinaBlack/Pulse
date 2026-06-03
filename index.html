@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.4 — 2026-06-02 | top_k:1 for determinism, retry-on-null without preprocessing, HEIC validation -->
+<!-- Pulse v5.5 — 2026-06-02 | OCR item layout uses CSS grid: Date↔Notes-left, Device↔Notes-right alignment -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -284,10 +284,8 @@
  .ocr-status { font-size: 12px; color: var(--text3); font-family: 'DM Mono', monospace; }
  .ocr-header-row {
  display: flex;
- flex-wrap: wrap;
- align-items: flex-end;
- gap: 10px;
- row-gap: 8px;
+ align-items: center;
+ gap: 8px;
  }
  .ocr-filename {
  display: flex;
@@ -296,21 +294,52 @@
  color: var(--text2);
  font-size: 13px;
  padding-bottom: 8px;
- flex: 1 1 200px;
- min-width: 140px;
- max-width: 100%;
  overflow: hidden;
  text-overflow: ellipsis;
  white-space: nowrap;
+ min-width: 0;
  }
  .ocr-filename span {
  overflow: hidden;
  text-overflow: ellipsis;
  white-space: nowrap;
  }
- .ocr-header-row .ocr-field input[type="date"] { width: 140px; }
- .ocr-header-row .ocr-field input[type="time"] { width: 100px; }
- .ocr-header-row .ocr-device input { width: 140px; }
+
+ /* CSS grid for ready OCR items — aligns Date↔Notes left, Device↔Notes right */
+ .ocr-grid {
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) 140px 100px 140px;
+ column-gap: 10px;
+ row-gap: 6px;
+ align-items: end;
+ }
+ .ocr-grid .ocr-filename { grid-column: 1; grid-row: 1; align-self: end; }
+ .ocr-grid .ocr-col-date { grid-column: 2; grid-row: 1; }
+ .ocr-grid .ocr-col-time { grid-column: 3; grid-row: 1; }
+ .ocr-grid .ocr-col-device { grid-column: 4; grid-row: 1; }
+ .ocr-grid .ocr-meas-group {
+ grid-column: 1; grid-row: 2;
+ display: flex; gap: 8px;
+ min-width: 0;
+ }
+ .ocr-grid .ocr-meas-group .ocr-field { flex: 1; min-width: 0; }
+ .ocr-grid .ocr-col-notes { grid-column: 2 / -1; grid-row: 2; }
+ .ocr-grid .ocr-col-notes input { width: 100%; }
+ .ocr-grid .ocr-col-date input,
+ .ocr-grid .ocr-col-time input,
+ .ocr-grid .ocr-col-device input { width: 100%; }
+
+ @media (max-width: 700px) {
+ .ocr-grid {
+ grid-template-columns: 1fr 1fr;
+ }
+ .ocr-grid .ocr-filename { grid-column: 1 / -1; grid-row: auto; }
+ .ocr-grid .ocr-col-date { grid-column: 1; grid-row: auto; }
+ .ocr-grid .ocr-col-time { grid-column: 2; grid-row: auto; }
+ .ocr-grid .ocr-col-device { grid-column: 1 / -1; grid-row: auto; }
+ .ocr-grid .ocr-meas-group { grid-column: 1 / -1; grid-row: auto; }
+ .ocr-grid .ocr-col-notes { grid-column: 1 / -1; grid-row: auto; }
+ }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
  width: 14px; height: 14px;
@@ -1164,27 +1193,30 @@ function renderOCRQueue() {
  return `
  <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
  <div>
+ ${item.status === 'ready' ? `
+ <div class="ocr-grid">
+ <div class="ocr-filename">📋 <span>${item.file?.name || 'Image'}</span></div>
+ <div class="ocr-field ocr-col-date"><label>Date</label><input type="date" class="dt-input" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
+ <div class="ocr-field ocr-col-time"><label>Time</label><input type="time" class="dt-input" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
+ <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
+ <div class="ocr-meas-group">
+ <div class="ocr-field"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
+ <div class="ocr-field"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
+ <div class="ocr-field"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
+ </div>
+ <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+ </div>
+ ` : `
  <div class="ocr-header-row">
  <div class="ocr-filename">
  ${item.status === 'processing' ? '<div class="spinner"></div>' : '📋'}
  <span>${item.file?.name || 'Image'}</span>
  </div>
- ${item.status === 'ready' ? `
- <div class="ocr-field"><label>Date</label><input type="date" class="dt-input" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
- <div class="ocr-field"><label>Time</label><input type="time" class="dt-input" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
- <div class="ocr-field ocr-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
- ` : ''}
  </div>
+ `}
  ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
  ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
  ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
- ${item.status === 'ready' ? `
- <div class="ocr-fields">
- <div class="ocr-field"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
- <div class="ocr-field"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
- <div class="ocr-field"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
- <div class="ocr-field ocr-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
- </div>` : ''}
  </div>
  <div class="ocr-actions">
  ${item.status === 'ready' ? `<button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Commit</button>` : ''}
