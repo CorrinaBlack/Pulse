@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.2 — 2026-06-02 | Editable Device field everywhere, split date/time inputs, taller Notes, picker icon on left -->
+<!-- Pulse v5.3 — 2026-06-02 | OCR header row (filename + date + time + device), entry stays open until queue empty -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -282,6 +282,35 @@
  .btn-remove:hover { border-color: var(--red); color: var(--red); }
 
  .ocr-status { font-size: 12px; color: var(--text3); font-family: 'DM Mono', monospace; }
+ .ocr-header-row {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: flex-end;
+ gap: 10px;
+ row-gap: 8px;
+ }
+ .ocr-filename {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ color: var(--text2);
+ font-size: 13px;
+ padding-bottom: 8px;
+ flex: 1 1 200px;
+ min-width: 140px;
+ max-width: 100%;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ }
+ .ocr-filename span {
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ }
+ .ocr-header-row .ocr-field input[type="date"] { width: 140px; }
+ .ocr-header-row .ocr-field input[type="time"] { width: 100px; }
+ .ocr-header-row .ocr-device input { width: 140px; }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
  width: 14px; height: 14px;
@@ -746,8 +775,9 @@ function toggleAccordion(id) {
 
 function setEntryAccordion() {
  const hasData = records.length > 0;
+ const hasPending = ocrQueue.length > 0;
  const el = document.getElementById('acc-entry');
- if (hasData) { el.classList.remove('open'); }
+ if (hasData && !hasPending) { el.classList.remove('open'); }
  else { el.classList.add('open'); }
 }
 
@@ -1094,6 +1124,9 @@ function renderOCRQueue() {
  const bar = document.getElementById('commitAllBar');
  const countEl = document.getElementById('queueCount');
 
+ // Keep entry accordion open while queue has pending items
+ setEntryAccordion();
+
  if (ocrQueue.length === 0) {
  container.innerHTML = '';
  bar.style.display = 'none';
@@ -1107,9 +1140,16 @@ function renderOCRQueue() {
  return `
  <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
  <div>
- <div class="ocr-status" style="display:flex;align-items:center;gap:8px">
+ <div class="ocr-header-row">
+ <div class="ocr-filename">
  ${item.status === 'processing' ? '<div class="spinner"></div>' : '📋'}
- <span style="color:var(--text2);font-size:13px">${item.file?.name || 'Image'}</span>
+ <span>${item.file?.name || 'Image'}</span>
+ </div>
+ ${item.status === 'ready' ? `
+ <div class="ocr-field"><label>Date</label><input type="date" class="dt-input" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
+ <div class="ocr-field"><label>Time</label><input type="time" class="dt-input" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
+ <div class="ocr-field ocr-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
+ ` : ''}
  </div>
  ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
  ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
@@ -1119,9 +1159,6 @@ function renderOCRQueue() {
  <div class="ocr-field"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
  <div class="ocr-field"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
  <div class="ocr-field"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
- <div class="ocr-field ocr-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron" style="width:140px"></div>
- <div class="ocr-field"><label>Date</label><input type="date" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)" style="width:140px"></div>
- <div class="ocr-field"><label>Time</label><input type="time" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)" style="width:100px"></div>
  <div class="ocr-field ocr-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
  </div>` : ''}
  </div>
