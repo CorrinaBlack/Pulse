@@ -1,5 +1,5 @@
 
-<!-- Pulse v4.5 — 2026-06-02 | 2x upscale cropped LCD, no grayscale, 40s overall timeout for HEIC -->
+<!-- Pulse v4.6 — 2026-06-02 | Pass 2 OCR upgraded to Opus 4.7 for higher-res vision (2576px) and accuracy -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -920,7 +920,7 @@ async function handleFiles(files) {
  'anthropic-dangerous-direct-browser-access': 'true'
  },
  body: JSON.stringify({
- model: 'claude-sonnet-4-20250514',
+ model: 'claude-opus-4-7',
  max_tokens: 200,
  temperature: 0,
  system: 'You read blood pressure monitors. Given a photo of an LCD display, return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Use null if a value is not visible. No other text.',
