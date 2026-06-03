@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.5 — 2026-06-02 | OCR item layout uses CSS grid: Date↔Notes-left, Device↔Notes-right alignment -->
+<!-- Pulse v5.6 — 2026-06-02 | Removed top_k (also deprecated for Opus 4.7) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -970,7 +970,6 @@ async function handleFiles(files) {
  body: JSON.stringify({
  model: 'claude-opus-4-7',
  max_tokens: 200,
- top_k: 1,
  system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
  messages: [{
  role: 'user',
@@ -1009,7 +1008,6 @@ async function handleFiles(files) {
  model: 'claude-sonnet-4-20250514',
  max_tokens: 100,
  temperature: 0,
- top_k: 1,
  system: 'Return ONLY a JSON object with the bounding box of the LCD/digital display screen showing the blood pressure numbers. Use percentage coordinates (0-100): {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
  messages: [{
  role: 'user',
