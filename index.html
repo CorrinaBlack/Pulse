@@ -1,5 +1,5 @@
 
-<!-- Pulse v4.7 — 2026-06-02 | Single-pass: full image at 2576px to Opus 4.7, no bbox/crop/upscale -->
+<!-- Pulse v4.8 — 2026-06-02 | Removed deprecated temperature param for Opus 4.7 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -862,7 +862,6 @@ async function handleFiles(files) {
  body: JSON.stringify({
  model: 'claude-opus-4-7',
  max_tokens: 200,
- temperature: 0,
  system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
  messages: [{
  role: 'user',
