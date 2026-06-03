@@ -1,4 +1,5 @@
-<!-- Pulse v5.1 LOCKED — 2026-06-02 | Two-pass: Sonnet bbox detection + 10% padding crop → Opus 4.7 OCR with grayscale/contrast -->
+
+<!-- Pulse v5.2 — 2026-06-02 | Editable Device field everywhere, split date/time inputs, taller Notes, picker icon on left -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -184,7 +185,20 @@
  width: 100%;
  }
  .form-group input:focus, .form-group textarea:focus { border-color: var(--accent); }
- .form-group textarea { resize: vertical; min-height: 60px; }
+ .form-group textarea { resize: vertical; min-height: 72px; line-height: 1.45; }
+
+ /* Date/time inputs: picker icon on the left */
+ .form-group .dt-input { padding-left: 40px; position: relative; }
+ .form-group .dt-input::-webkit-calendar-picker-indicator {
+ position: absolute;
+ left: 10px;
+ top: 50%;
+ transform: translateY(-50%);
+ cursor: pointer;
+ opacity: 0.7;
+ filter: invert(0.8);
+ }
+ .form-group .dt-input::-webkit-calendar-picker-indicator:hover { opacity: 1; }
  .form-full { grid-column: 1 / -1; }
 
  .submit-btn {
@@ -583,8 +597,16 @@
  <input type="number" id="m-bpm" placeholder="72" min="20" max="250" />
  </div>
  <div class="form-group">
- <label>Date &amp; Time</label>
- <input type="datetime-local" id="m-dt" />
+ <label>Device</label>
+ <input type="text" id="m-device" placeholder="e.g. Omron, iHealth…" />
+ </div>
+ <div class="form-group">
+ <label>Date</label>
+ <input type="date" id="m-d" class="dt-input" />
+ </div>
+ <div class="form-group">
+ <label>Time</label>
+ <input type="time" id="m-t" class="dt-input" />
  </div>
  <div class="form-group form-full">
  <label>Notes (optional)</label>
@@ -630,8 +652,16 @@
  <input type="number" id="e-bpm" />
  </div>
  <div class="form-group">
- <label>Date &amp; Time</label>
- <input type="datetime-local" id="e-dt" />
+ <label>Device</label>
+ <input type="text" id="e-device" placeholder="e.g. Omron, iHealth…" />
+ </div>
+ <div class="form-group">
+ <label>Date</label>
+ <input type="date" id="e-d" class="dt-input" />
+ </div>
+ <div class="form-group">
+ <label>Time</label>
+ <input type="time" id="e-t" class="dt-input" />
  </div>
  <div class="form-group form-full">
  <label>Notes</label>
@@ -692,6 +722,23 @@ function nowLocalISO() {
  return new Date(d - off).toISOString().slice(0,16);
 }
 
+// Split ISO datetime (YYYY-MM-DDTHH:MM) into separate date + time strings
+function splitDT(iso) {
+ if (!iso || !iso.includes('T')) {
+ const now = nowLocalISO();
+ const [d, t] = now.split('T');
+ return { d, t };
+ }
+ const [d, t] = iso.split('T');
+ return { d, t: t.slice(0,5) };
+}
+
+// Combine date + time into ISO datetime; returns null if either is missing
+function combineDT(d, t) {
+ if (!d || !t) return null;
+ return d + 'T' + t.slice(0,5);
+}
+
 // ─── ACCORDION ────────────────────────────────────────────────────────────────
 function toggleAccordion(id) {
  document.getElementById(id).classList.toggle('open');
@@ -715,8 +762,10 @@ function switchTab(tab) {
 // Init default tab
 switchTab('photo');
 
-// Set default datetime for manual entry
-document.getElementById('m-dt').value = nowLocalISO();
+// Set default date and time for manual entry
+const _initDT = splitDT(nowLocalISO());
+document.getElementById('m-d').value = _initDT.d;
+document.getElementById('m-t').value = _initDT.t;
 
 // ─── DRAG & DROP ──────────────────────────────────────────────────────────────
 const dropZone = document.getElementById('dropZone');
@@ -792,7 +841,7 @@ async function handleFiles(files) {
 
  for (const file of toProcess) {
  const qid = genId();
- const item = { qid, file, status: 'processing', sys:'', dia:'', bpm:'', dt:'', notes:'' };
+ const item = { qid, file, status: 'processing', sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
  ocrQueue.push(item);
  renderOCRQueue();
 
@@ -1054,13 +1103,13 @@ function renderOCRQueue() {
  container.innerHTML = ocrQueue.map(item => {
  const dupCheck = checkDuplicate(item.dt);
  const isWarn = dupCheck && item.status === 'ready';
+ const parts = splitDT(item.dt);
  return `
  <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
  <div>
  <div class="ocr-status" style="display:flex;align-items:center;gap:8px">
  ${item.status === 'processing' ? '<div class="spinner"></div>' : '📋'}
  <span style="color:var(--text2);font-size:13px">${item.file?.name || 'Image'}</span>
- ${item.device ? `<span style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${item.device}</span>` : ''}
  </div>
  ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
  ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
@@ -1070,7 +1119,9 @@ function renderOCRQueue() {
  <div class="ocr-field"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
  <div class="ocr-field"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
  <div class="ocr-field"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
- <div class="ocr-field"><label>Date &amp; Time</label><input type="datetime-local" value="${item.dt}" onchange="updateOCR('${item.qid}','dt',this.value)" style="width:175px"></div>
+ <div class="ocr-field ocr-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron" style="width:140px"></div>
+ <div class="ocr-field"><label>Date</label><input type="date" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)" style="width:140px"></div>
+ <div class="ocr-field"><label>Time</label><input type="time" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)" style="width:100px"></div>
  <div class="ocr-field ocr-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
  </div>` : ''}
  </div>
@@ -1092,7 +1143,16 @@ function renderOCRQueue() {
 
 function updateOCR(qid, field, val) {
  const item = ocrQueue.find(i => i.qid === qid);
- if (item) item[field] = val;
+ if (!item) return;
+ if (field === 'd' || field === 't') {
+ // Combine the new date/time part with the existing other part
+ const parts = splitDT(item.dt);
+ if (field === 'd') parts.d = val; else parts.t = val;
+ const combined = combineDT(parts.d, parts.t);
+ if (combined) item.dt = combined;
+ } else {
+ item[field] = val;
+ }
 }
 
 function removeOCRItem(qid) {
@@ -1104,7 +1164,7 @@ function commitItem(qid) {
  const item = ocrQueue.find(i => i.qid === qid);
  if (!item) return;
  if (!item.sys || !item.dia) { alert('Please enter at least systolic and diastolic values.'); return; }
- saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, dt: item.dt, notes: item.notes });
+ saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
  renderData();
@@ -1114,7 +1174,7 @@ function commitAll() {
  const ready = ocrQueue.filter(i => i.status === 'ready');
  ready.forEach(item => {
  if (item.sys && item.dia) {
- saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, dt: item.dt, notes: item.notes });
+ saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
  }
  });
  ocrQueue = ocrQueue.filter(i => i.status !== 'ready');
@@ -1127,15 +1187,21 @@ function submitManual() {
  const sys = +document.getElementById('m-sys').value;
  const dia = +document.getElementById('m-dia').value;
  const bpm = +document.getElementById('m-bpm').value || null;
- const dt = document.getElementById('m-dt').value;
+ const device = document.getElementById('m-device').value.trim();
+ const d = document.getElementById('m-d').value;
+ const t = document.getElementById('m-t').value;
+ const dt = combineDT(d, t);
  const notes = document.getElementById('m-notes').value.trim();
- if (!sys || !dia || !dt) { alert('Please enter systolic, diastolic, and date/time.'); return; }
- saveRecord({ sys, dia, bpm, dt, notes });
+ if (!sys || !dia || !dt) { alert('Please enter systolic, diastolic, date, and time.'); return; }
+ saveRecord({ sys, dia, bpm, device, dt, notes });
  document.getElementById('m-sys').value = '';
  document.getElementById('m-dia').value = '';
  document.getElementById('m-bpm').value = '';
+ document.getElementById('m-device').value = '';
  document.getElementById('m-notes').value = '';
- document.getElementById('m-dt').value = nowLocalISO();
+ const now = splitDT(nowLocalISO());
+ document.getElementById('m-d').value = now.d;
+ document.getElementById('m-t').value = now.t;
  renderData();
 }
 
@@ -1143,10 +1209,10 @@ function checkDuplicate(dt) {
  return records.some(r => r.dt === dt);
 }
 
-function saveRecord({ sys, dia, bpm, dt, notes }) {
+function saveRecord({ sys, dia, bpm, device, dt, notes }) {
  const existing = records.findIndex(r => r.dt === dt);
  if (existing >= 0) { records.splice(existing, 1); }
- records.push({ id: genId(), sys, dia, bpm, dt, notes: notes || '' });
+ records.push({ id: genId(), sys, dia, bpm, device: device || '', dt, notes: notes || '' });
  records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
 }
@@ -1394,7 +1460,10 @@ function openEdit(id) {
  document.getElementById('e-sys').value = r.sys;
  document.getElementById('e-dia').value = r.dia;
  document.getElementById('e-bpm').value = r.bpm || '';
- document.getElementById('e-dt').value = r.dt;
+ document.getElementById('e-device').value = r.device || '';
+ const parts = splitDT(r.dt);
+ document.getElementById('e-d').value = parts.d;
+ document.getElementById('e-t').value = parts.t;
  document.getElementById('e-notes').value = r.notes || '';
  document.getElementById('editModal').classList.add('open');
 }
@@ -1410,7 +1479,12 @@ function saveEdit() {
  r.sys = +document.getElementById('e-sys').value;
  r.dia = +document.getElementById('e-dia').value;
  r.bpm = +document.getElementById('e-bpm').value || null;
- r.dt = document.getElementById('e-dt').value;
+ r.device = document.getElementById('e-device').value.trim();
+ const d = document.getElementById('e-d').value;
+ const t = document.getElementById('e-t').value;
+ const dt = combineDT(d, t);
+ if (!dt) { alert('Please enter both date and time.'); return; }
+ r.dt = dt;
  r.notes = document.getElementById('e-notes').value.trim();
  records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
@@ -1433,14 +1507,16 @@ document.getElementById('editModal').addEventListener('click', function(e) {
 // ─── EXPORT CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
  if (records.length === 0) { alert('No data to export.'); return; }
- const header = ['Date','Time','Systolic','Diastolic','BPM','Category','Notes'];
+ const header = ['Date','Time','Systolic','Diastolic','BPM','Device','Category','Notes'];
  const rows = records.map(r => {
  const d = new Date(r.dt);
  const cat = bpCategory(r.sys, r.dia);
  return [
  d.toLocaleDateString('en-US'),
  d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
- r.sys, r.dia, r.bpm||'', cat.label,
+ r.sys, r.dia, r.bpm||'',
+ '"' + (r.device||'').replace(/"/g,'""') + '"',
+ cat.label,
  '"' + (r.notes||'').replace(/"/g,'""') + '"'
  ].join(',');
  });
