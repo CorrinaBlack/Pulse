@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.0 — 2026-06-02 | Always apply grayscale + contrast preprocessing before Opus 4.7 OCR -->
+<!-- Pulse v5.1 — 2026-06-02 | Two-pass: Sonnet bbox detection + 10% padding crop → Opus 4.7 OCR with grayscale/contrast -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -811,38 +811,44 @@ async function handleFiles(files) {
  const { img, dataUrl } = await Promise.race([loadPromise, timeoutPromise]);
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
- // Single-pass: send full image directly to Opus 4.7 at its max resolution
  const MAX_BASE64 = 5242880 - 50000;
- const OPUS_MAX_DIM = 2576; // Opus 4.7 high-res vision support
+ const OPUS_MAX_DIM = 2576;
 
- // Resize to fit within Opus's resolution limit (no crop, no upscale)
- let w = natW, h = natH;
- if (Math.max(w, h) > OPUS_MAX_DIM) {
- const s = OPUS_MAX_DIM / Math.max(w, h);
- w = Math.round(w * s);
- h = Math.round(h * s);
+ // Helper: render a region of the image with optional filter, scaled to fit target
+ // crop = {x, y, w, h} in source pixels; or null for full image
+ const renderRegion = (crop, filterCss, maxDim) => {
+ const sx = crop ? crop.x : 0;
+ const sy = crop ? crop.y : 0;
+ const sw = crop ? crop.w : natW;
+ const sh = crop ? crop.h : natH;
+ let tw = sw, th = sh;
+ if (Math.max(tw, th) > maxDim) {
+ const s = maxDim / Math.max(tw, th);
+ tw = Math.round(tw * s);
+ th = Math.round(th * s);
  }
-// Helper: render image with optional filter and encode for API
- const renderAndEncode = (filterCss) => {
  const c = document.createElement('canvas');
- c.width = w;
- c.height = h;
+ c.width = tw;
+ c.height = th;
  const cx = c.getContext('2d');
  cx.imageSmoothingQuality = 'high';
  if (filterCss) cx.filter = filterCss;
- cx.drawImage(img, 0, 0, w, h);
+ cx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
  cx.filter = 'none';
- // Prefer PNG, fall back to JPEG quality sweep
+ // Prefer PNG, fall back to JPEG
  const pUrl = c.toDataURL('image/png');
  const pB64 = pUrl.split(',')[1];
- if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png' };
+ if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png', w: tw, h: th };
  for (let q = 0.96; q >= 0.18; q -= 0.04) {
  const jUrl = c.toDataURL('image/jpeg', q);
  const b64 = jUrl.split(',')[1];
- if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg' };
+ if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg', w: tw, h: th };
  }
  throw new Error('Could not compress image small enough');
  };
+
+ // For backward compatibility, renderAndEncode = full image with filter
+ const renderAndEncode = (filterCss) => renderRegion(null, filterCss, OPUS_MAX_DIM);
 
  // Helper: call Opus 4.7 and parse the JSON response
  const callOCR = async (encoded) => {
@@ -878,10 +884,58 @@ async function handleFiles(files) {
  return JSON.parse(m[0]);
  };
 
- // First attempt: with grayscale + contrast preprocessing applied to all images
- console.log('Pulse: rendering with grayscale + contrast preprocessing');
- const encoded = renderAndEncode('grayscale(1) contrast(1.5) brightness(1.05)');
- console.log('Pulse: sending ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type);
+ // PASS 1: Cheap bbox detection with Sonnet on a small preview
+ let crop = null;
+ try {
+ const preview = renderRegion(null, null, 1200);
+ console.log('Pulse: Pass 1 — detecting LCD bbox with Sonnet');
+ const bboxResp = await fetch('https://api.anthropic.com/v1/messages', {
+ method: 'POST',
+ headers: {
+ 'Content-Type': 'application/json',
+ 'x-api-key': apiKey,
+ 'anthropic-version': '2023-06-01',
+ 'anthropic-dangerous-direct-browser-access': 'true'
+ },
+ body: JSON.stringify({
+ model: 'claude-sonnet-4-20250514',
+ max_tokens: 100,
+ system: 'Return ONLY a JSON object with the bounding box of the LCD/digital display screen showing the blood pressure numbers. Use percentage coordinates (0-100): {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
+ { type: 'text', text: 'Where is the LCD display showing the blood pressure numbers? Return bounding box as percentages.' }
+ ]
+ }]
+ })
+ });
+ if (bboxResp.ok) {
+ const bboxData = await bboxResp.json();
+ const bboxText = bboxData.content?.find(b => b.type === 'text')?.text || '';
+ const bm = bboxText.match(/\{[\s\S]*?\}/);
+ if (bm) {
+ const box = JSON.parse(bm[0]);
+ if (box.x != null && box.y != null && box.w != null && box.h != null) {
+ // Apply 10% padding around detected bbox
+ const padX = box.w * 0.10;
+ const padY = box.h * 0.10;
+ const x1 = Math.max(0, box.x - padX) / 100 * natW;
+ const y1 = Math.max(0, box.y - padY) / 100 * natH;
+ const x2 = Math.min(100, box.x + box.w + padX) / 100 * natW;
+ const y2 = Math.min(100, box.y + box.h + padY) / 100 * natH;
+ crop = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
+ console.log('Pulse: LCD bbox + 10% padding: ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
+ ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image)');
+ }
+ }
+ }
+ } catch(e) { console.log('Pulse: bbox detection failed, will use full image:', e.message); }
+
+ // PASS 2: Send cropped (or full) image with grayscale + contrast preprocessing to Opus 4.7
+ console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (crop ? ' (cropped)' : ' (full)'));
+ const encoded = renderRegion(crop, 'grayscale(1) contrast(1.5) brightness(1.05)', OPUS_MAX_DIM);
+ console.log('Pulse: sending ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
  const parsed = await callOCR(encoded);
 
  item.sys = parsed.systolic != null ? String(parsed.systolic) : '';
