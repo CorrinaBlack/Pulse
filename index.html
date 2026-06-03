@@ -1,5 +1,5 @@
 
-<!-- Pulse v4.6 — 2026-06-02 | Pass 2 OCR upgraded to Opus 4.7 for higher-res vision (2576px) and accuracy -->
+<!-- Pulse v4.7 — 2026-06-02 | Single-pass: full image at 2576px to Opus 4.7, no bbox/crop/upscale -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -801,7 +801,7 @@ async function handleFiles(files) {
  const exifDt = await getExifDate(file);
  item.dt = exifDt || nowLocalISO();
 
- // Two-pass Vision: 1) find LCD bounding box, 2) crop & OCR
+ // Single-pass: send full high-res image to Opus 4.7 for OCR
  try {
  // Overall 40s timeout — catches HEIC conversion hangs
  const loadPromise = loadImage(file);
@@ -811,106 +811,46 @@ async function handleFiles(files) {
  const { img, dataUrl } = await Promise.race([loadPromise, timeoutPromise]);
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
- // Encode full image for pass 1 (just needs to be readable, not perfect)
- const fullCanvas = document.createElement('canvas');
- const scale1 = Math.min(1, 1600 / Math.max(natW, natH));
- fullCanvas.width = Math.round(natW * scale1);
- fullCanvas.height = Math.round(natH * scale1);
- const fctx = fullCanvas.getContext('2d');
- fctx.drawImage(img, 0, 0, fullCanvas.width, fullCanvas.height);
- const fullB64 = fullCanvas.toDataURL('image/jpeg', 0.80).split(',')[1];
-
- // PASS 1: Get bounding box of the LCD display
- console.log('Pulse: Pass 1 — locating LCD display...');
- const bboxResp = await fetch('https://api.anthropic.com/v1/messages', {
- method: 'POST',
- headers: {
- 'Content-Type': 'application/json',
- 'x-api-key': apiKey,
- 'anthropic-version': '2023-06-01',
- 'anthropic-dangerous-direct-browser-access': 'true'
- },
- body: JSON.stringify({
- model: 'claude-sonnet-4-20250514',
- max_tokens: 100,
- temperature: 0,
- system: 'Return ONLY a JSON object with the bounding box of the LCD/digital display screen showing the blood pressure numbers. Use percentage coordinates (0-100) relative to the full image: {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
- messages: [{
- role: 'user',
- content: [
- { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: fullB64 } },
- { type: 'text', text: 'Where is the LCD display showing blood pressure numbers? Return bounding box as percentages.' }
- ]
- }]
- })
- });
-
- let cropX = 0, cropY = 0, cropW = natW, cropH = natH;
- let cropped = false;
-
- if (bboxResp.ok) {
- const bboxData = await bboxResp.json();
- const bboxText = bboxData.content?.find(b => b.type === 'text')?.text || '';
- const bboxMatch = bboxText.match(/\{[\s\S]*?\}/);
- if (bboxMatch) {
- try {
- const box = JSON.parse(bboxMatch[0]);
- if (box.x != null && box.y != null && box.w != null && box.h != null) {
- // Add padding around detected region
- const pad = 5; // 5% padding
- const x1 = Math.max(0, box.x - pad) / 100 * natW;
- const y1 = Math.max(0, box.y - pad) / 100 * natH;
- const x2 = Math.min(100, box.x + box.w + pad) / 100 * natW;
- const y2 = Math.min(100, box.y + box.h + pad) / 100 * natH;
- cropX = Math.round(x1);
- cropY = Math.round(y1);
- cropW = Math.round(x2 - x1);
- cropH = Math.round(y2 - y1);
- cropped = true;
- console.log('Pulse: LCD found at ' + cropX + ',' + cropY + ' ' + cropW + 'x' + cropH +
- ' (' + Math.round(cropW*cropH/(natW*natH)*100) + '% of image)');
- }
- } catch(e) { console.log('Pulse: bbox parse failed, using full image'); }
- }
- } else {
- console.log('Pulse: bbox call failed, using full image');
- }
-
- // PASS 2: Crop, enhance, and OCR
+ // Single-pass: send full image directly to Opus 4.7 at its max resolution
  const MAX_BASE64 = 5242880 - 50000;
- // Upscale cropped region 2x for sharper LCD digits
- const scale = Math.min(2, 4000 / Math.max(cropW, cropH)); // cap at 4000px
- const ocrCanvas = document.createElement('canvas');
- ocrCanvas.width = Math.round(cropW * scale);
- ocrCanvas.height = Math.round(cropH * scale);
- const octx = ocrCanvas.getContext('2d');
- octx.imageSmoothingEnabled = false; // nearest-neighbor for crisp LCD edges
- octx.filter = 'contrast(2.2) brightness(1.1)';
- octx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, ocrCanvas.width, ocrCanvas.height);
- octx.filter = 'none';
- console.log('Pulse: cropped ' + cropW + 'x' + cropH + ' → upscaled to ' + ocrCanvas.width + 'x' + ocrCanvas.height);
+ const OPUS_MAX_DIM = 2576; // Opus 4.7 high-res vision support
 
- // Encode cropped image — try PNG first, then JPEG
+ // Resize to fit within Opus's resolution limit (no crop, no upscale)
+ let w = natW, h = natH;
+ if (Math.max(w, h) > OPUS_MAX_DIM) {
+ const s = OPUS_MAX_DIM / Math.max(w, h);
+ w = Math.round(w * s);
+ h = Math.round(h * s);
+ }
+ const ocrCanvas = document.createElement('canvas');
+ ocrCanvas.width = w;
+ ocrCanvas.height = h;
+ const octx = ocrCanvas.getContext('2d');
+ octx.imageSmoothingQuality = 'high';
+ octx.drawImage(img, 0, 0, w, h);
+ console.log('Pulse: sending full image at ' + w + 'x' + h + ' to Opus 4.7');
+
+ // Encode — prefer PNG for sharpness, fall back to JPEG
  let ocrB64, ocrType;
  const pngUrl = ocrCanvas.toDataURL('image/png');
  const pngB64 = pngUrl.split(',')[1];
  if (pngB64.length <= MAX_BASE64) {
  ocrB64 = pngB64; ocrType = 'image/png';
- console.log('Pulse: Pass 2 — sending cropped PNG ' + (pngB64.length/1e6).toFixed(1) + 'MB');
+ console.log('Pulse: sending PNG ' + (pngB64.length/1e6).toFixed(1) + 'MB');
  } else {
  for (let q = 0.96; q >= 0.18; q -= 0.04) {
  const jpgUrl = ocrCanvas.toDataURL('image/jpeg', q);
  const b64 = jpgUrl.split(',')[1];
  if (b64.length <= MAX_BASE64) {
  ocrB64 = b64; ocrType = 'image/jpeg';
- console.log('Pulse: Pass 2 — sending cropped JPEG q=' + q.toFixed(2) + ' ' + (b64.length/1e6).toFixed(1) + 'MB');
+ console.log('Pulse: sending JPEG q=' + q.toFixed(2) + ' ' + (b64.length/1e6).toFixed(1) + 'MB');
  break;
  }
  }
  }
  if (!ocrB64) throw new Error('Could not compress image small enough');
 
- console.log('Pulse: Pass 2 — reading values...');
+ console.log('Pulse: reading values...');
  const ocrResp = await fetch('https://api.anthropic.com/v1/messages', {
  method: 'POST',
  headers: {
@@ -923,12 +863,12 @@ async function handleFiles(files) {
  model: 'claude-opus-4-7',
  max_tokens: 200,
  temperature: 0,
- system: 'You read blood pressure monitors. Given a photo of an LCD display, return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Use null if a value is not visible. No other text.',
+ system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: ocrType, data: ocrB64 } },
- { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values.' }
+ { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.' }
  ]
  }]
  })
@@ -1071,7 +1011,7 @@ function renderOCRQueue() {
  <span style="color:var(--text2);font-size:13px">${item.file?.name || 'Image'}</span>
  ${item.device ? `<span style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${item.device}</span>` : ''}
  </div>
- ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Detecting display &amp; reading values…</div>` : ''}
+ ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
  ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
  ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
  ${item.status === 'ready' ? `
