@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.9 — 2026-06-02 | Show device screen image immediately via blob URL, replaced with canvas thumb after load -->
+<!-- Pulse v5.10 — 2026-06-02 | Commit/Remove buttons moved to row 3 of OCR item, right-aligned -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -244,10 +244,14 @@
  border-radius: var(--radius-sm);
  padding: 14px;
  display: grid;
- grid-template-columns: auto 1fr auto;
+ grid-template-columns: auto 1fr;
+ grid-template-rows: auto auto;
  gap: 12px;
  align-items: start;
  }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1; }
+ .ocr-item > .ocr-body { grid-column: 2; grid-row: 1; min-width: 0; }
+ .ocr-item > .ocr-actions { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
  .ocr-thumb-wrap {
  width: 120px;
  flex-shrink: 0;
@@ -275,8 +279,10 @@
  text-align: center;
  }
  @media (max-width: 700px) {
- .ocr-item { grid-template-columns: 1fr auto; }
- .ocr-thumb-wrap { grid-column: 1 / -1; width: 100%; max-width: 240px; }
+ .ocr-item { grid-template-columns: 1fr; }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1; width: 100%; max-width: 240px; }
+ .ocr-item > .ocr-body { grid-column: 1; grid-row: 2; }
+ .ocr-item > .ocr-actions { grid-column: 1; grid-row: 3; justify-content: flex-end; }
  }
  .ocr-item.warning { border-color: var(--yellow); }
  .ocr-warn { font-size: 12px; color: var(--yellow); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
@@ -296,7 +302,7 @@
  }
  .ocr-field input:focus { border-color: var(--accent); }
  .ocr-notes input { width: 180px; }
- .ocr-actions { display: flex; flex-direction: column; gap: 6px; }
+ .ocr-actions { display: flex; flex-direction: row; gap: 8px; align-items: center; }
  .btn-sm {
  padding: 6px 12px;
  border-radius: 6px;
@@ -1243,7 +1249,7 @@ function renderOCRQueue() {
  ? `<img src="${item.thumb}" alt="${item.file?.name || 'image'}" />`
  : `<div class="thumb-placeholder">${item.status === 'processing' ? 'Loading…' : 'No preview'}</div>`}
  </div>
- <div>
+ <div class="ocr-body">
  ${item.status === 'ready' ? `
  <div class="ocr-grid">
  <div class="ocr-filename">📋 <span>${item.file?.name || 'Image'}</span></div>
