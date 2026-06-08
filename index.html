@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.6 — 2026-06-02 | Removed top_k (also deprecated for Opus 4.7) -->
+<!-- Pulse v5.8 — 2026-06-02 | Show thumbnail of uploaded image to left of OCR fields for visual verification -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -244,9 +244,39 @@
  border-radius: var(--radius-sm);
  padding: 14px;
  display: grid;
- grid-template-columns: 1fr auto;
- gap: 10px;
+ grid-template-columns: auto 1fr auto;
+ gap: 12px;
  align-items: start;
+ }
+ .ocr-thumb-wrap {
+ width: 120px;
+ flex-shrink: 0;
+ background: #0a0a0a;
+ border: 1px solid var(--border);
+ border-radius: 6px;
+ overflow: hidden;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+ min-height: 90px;
+ }
+ .ocr-thumb-wrap img {
+ width: 100%;
+ height: auto;
+ max-height: 180px;
+ object-fit: contain;
+ display: block;
+ }
+ .ocr-thumb-wrap .thumb-placeholder {
+ color: var(--text3);
+ font-size: 11px;
+ font-family: 'DM Mono', monospace;
+ padding: 14px;
+ text-align: center;
+ }
+ @media (max-width: 700px) {
+ .ocr-item { grid-template-columns: 1fr auto; }
+ .ocr-thumb-wrap { grid-column: 1 / -1; width: 100%; max-width: 240px; }
  }
  .ocr-item.warning { border-color: var(--yellow); }
  .ocr-warn { font-size: 12px; color: var(--yellow); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
@@ -462,13 +492,13 @@
  letter-spacing: 1px;
  color: var(--text3);
  text-align: left;
- padding: 8px 10px;
+ padding: 8px 8px;
  border-bottom: 1px solid var(--border);
  }
  .data-table td {
- padding: 10px 10px;
+ padding: 9px 8px;
  border-bottom: 1px solid rgba(255,255,255,0.04);
- font-size: 13px;
+ font-size: 12px;
  vertical-align: middle;
  }
  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
@@ -542,7 +572,7 @@
  .date-filter { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; }
  .form-grid { grid-template-columns: 1fr; }
  .cat-grid { grid-template-columns: 1fr 1fr; }
- .data-table th:nth-child(6), .data-table td:nth-child(6) { display: none; }
+ .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
  }
 </style>
 </head>
@@ -918,6 +948,17 @@ async function handleFiles(files) {
  const { img, dataUrl } = await Promise.race([loadPromise, timeoutPromise]);
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
+ // Create small thumbnail for queue display (~240px max dimension, JPEG 0.75)
+ const thumbCanvas = document.createElement('canvas');
+ const thumbScale = Math.min(1, 240 / Math.max(natW, natH));
+ thumbCanvas.width = Math.round(natW * thumbScale);
+ thumbCanvas.height = Math.round(natH * thumbScale);
+ const tctx = thumbCanvas.getContext('2d');
+ tctx.imageSmoothingQuality = 'high';
+ tctx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
+ item.thumb = thumbCanvas.toDataURL('image/jpeg', 0.75);
+ renderOCRQueue();
+
  const MAX_BASE64 = 5242880 - 50000;
  const OPUS_MAX_DIM = 2576;
 
@@ -1190,6 +1231,11 @@ function renderOCRQueue() {
  const parts = splitDT(item.dt);
  return `
  <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
+ <div class="ocr-thumb-wrap">
+ ${item.thumb
+ ? `<img src="${item.thumb}" alt="${item.file?.name || 'image'}" />`
+ : `<div class="thumb-placeholder">${item.status === 'processing' ? 'Loading…' : 'No preview'}</div>`}
+ </div>
  <div>
  ${item.status === 'ready' ? `
  <div class="ocr-grid">
@@ -1376,6 +1422,7 @@ function renderData() {
  <th>Systolic</th>
  <th>Diastolic</th>
  <th>BPM</th>
+ <th>Device</th>
  <th>Notes</th>
  <th>Category</th>
  <th></th>
@@ -1414,11 +1461,12 @@ function renderTable(filtered) {
  const dt = new Date(r.dt);
  const cat = bpCategory(r.sys, r.dia);
  return `<tr>
- <td class="mono">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</td>
+ <td class="mono">${dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'})}</td>
  <td class="mono">${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</td>
  <td class="mono">${r.sys}</td>
  <td class="mono">${r.dia}</td>
  <td class="mono">${r.bpm||'—'}</td>
+ <td style="color:var(--text2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.device||'—'}</td>
  <td style="color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.notes||'—'}</td>
  <td><span class="bp-badge" style="background:${cat.color}22;color:${cat.color}">${cat.label}</span></td>
  <td><div class="td-actions">
