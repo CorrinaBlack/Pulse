@@ -1,5 +1,5 @@
 
-<!-- Pulse v5.8 — 2026-06-02 | Show thumbnail of uploaded image to left of OCR fields for visual verification -->
+<!-- Pulse v5.9 — 2026-06-02 | Show device screen image immediately via blob URL, replaced with canvas thumb after load -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -931,6 +931,8 @@ async function handleFiles(files) {
  for (const file of toProcess) {
  const qid = genId();
  const item = { qid, file, status: 'processing', sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
+ // Show image preview immediately via blob URL (will be revoked when item leaves queue)
+ try { item.thumb = URL.createObjectURL(file); } catch(e) { /* ignore */ }
  ocrQueue.push(item);
  renderOCRQueue();
 
@@ -949,6 +951,7 @@ async function handleFiles(files) {
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
  // Create small thumbnail for queue display (~240px max dimension, JPEG 0.75)
+ // For HEIC the initial blob URL may not have rendered; this canvas version always works
  const thumbCanvas = document.createElement('canvas');
  const thumbScale = Math.min(1, 240 / Math.max(natW, natH));
  thumbCanvas.width = Math.round(natW * thumbScale);
@@ -956,6 +959,10 @@ async function handleFiles(files) {
  const tctx = thumbCanvas.getContext('2d');
  tctx.imageSmoothingQuality = 'high';
  tctx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
+ // Revoke previous blob URL (if any) before replacing with canvas data URL
+ if (item.thumb && item.thumb.startsWith('blob:')) {
+ try { URL.revokeObjectURL(item.thumb); } catch(e) {}
+ }
  item.thumb = thumbCanvas.toDataURL('image/jpeg', 0.75);
  renderOCRQueue();
 
@@ -1293,6 +1300,10 @@ function updateOCR(qid, field, val) {
 }
 
 function removeOCRItem(qid) {
+ const item = ocrQueue.find(i => i.qid === qid);
+ if (item && item.thumb && item.thumb.startsWith('blob:')) {
+ try { URL.revokeObjectURL(item.thumb); } catch(e) {}
+ }
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
 }
@@ -1302,6 +1313,9 @@ function commitItem(qid) {
  if (!item) return;
  if (!item.sys || !item.dia) { alert('Please enter at least systolic and diastolic values.'); return; }
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
+ if (item.thumb && item.thumb.startsWith('blob:')) {
+ try { URL.revokeObjectURL(item.thumb); } catch(e) {}
+ }
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
  renderData();
@@ -1312,6 +1326,9 @@ function commitAll() {
  ready.forEach(item => {
  if (item.sys && item.dia) {
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
+ }
+ if (item.thumb && item.thumb.startsWith('blob:')) {
+ try { URL.revokeObjectURL(item.thumb); } catch(e) {}
  }
  });
  ocrQueue = ocrQueue.filter(i => i.status !== 'ready');
