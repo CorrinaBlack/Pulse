@@ -1,5 +1,4 @@
-
-<!-- Pulse v5.10 — 2026-06-02 | Commit/Remove buttons moved to row 3 of OCR item, right-aligned -->
+<!-- Pulse v5.11 — 2026-06-02 | Thumbnail spans both fields and actions rows; actions in column 2 only -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -245,13 +244,13 @@
  padding: 14px;
  display: grid;
  grid-template-columns: auto 1fr;
- grid-template-rows: auto auto;
+ grid-template-rows: 1fr auto;
  gap: 12px;
  align-items: start;
  }
- .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1; }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1 / -1; align-self: stretch; }
  .ocr-item > .ocr-body { grid-column: 2; grid-row: 1; min-width: 0; }
- .ocr-item > .ocr-actions { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
+ .ocr-item > .ocr-actions { grid-column: 2; grid-row: 2; justify-content: flex-end; }
  .ocr-thumb-wrap {
  width: 120px;
  flex-shrink: 0;
@@ -279,8 +278,8 @@
  text-align: center;
  }
  @media (max-width: 700px) {
- .ocr-item { grid-template-columns: 1fr; }
- .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1; width: 100%; max-width: 240px; }
+ .ocr-item { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1; width: 100%; max-width: 240px; align-self: auto; }
  .ocr-item > .ocr-body { grid-column: 1; grid-row: 2; }
  .ocr-item > .ocr-actions { grid-column: 1; grid-row: 3; justify-content: flex-end; }
  }
