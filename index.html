@@ -1,5 +1,4 @@
-
-<!-- Pulse v6.6 — 2026-06-02 | Sonnet returns 4 LCD corners; bbox + precise rotation computed geometrically -->
+<!-- Pulse v6.8 — 2026-06-02 | Rotation refinement: 2nd Sonnet pass on initially-rotated image to detect remaining tilt -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1184,23 +1183,31 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
- max_tokens: 200,
+ max_tokens: 250,
  temperature: 0,
  system: 'You analyze a photo of a blood pressure monitor.\n\n' +
- 'Find the 4 corners of the rectangular LCD/digital display screen and return them as percentage coordinates (0-100) of the image.\n\n' +
- 'Label the corners by their position relative to the LCD content (as you would read it, with digits right-side up):\n' +
- '- "tl" = top-left corner of the LCD (the corner above and to the left of the SYS/systolic number)\n' +
- '- "tr" = top-right corner of the LCD\n' +
- '- "br" = bottom-right corner of the LCD (below the pulse number, on the right)\n' +
- '- "bl" = bottom-left corner of the LCD\n\n' +
- 'These are the 4 corners as if you could touch them on the physical LCD glass — NOT the 4 corners of an axis-aligned bounding rectangle. If the LCD is tilted in the photo, the corners will form a tilted quadrilateral.\n\n' +
- 'Format: {"tl":{"x":NUMBER,"y":NUMBER},"tr":{"x":NUMBER,"y":NUMBER},"br":{"x":NUMBER,"y":NUMBER},"bl":{"x":NUMBER,"y":NUMBER}}\n' +
+ 'Find the 4 PHYSICAL corners of the rectangular LCD glass — the actual corner positions as they appear in the photo, NOT a bounding box.\n\n' +
+ 'CRITICAL: If the LCD is tilted in the photo (taken at an angle, or device on its side), the 4 corners will form a TILTED quadrilateral, not an axis-aligned rectangle. The vertical offset between top-left and top-right reflects the tilt.\n\n' +
+ 'Example for a LCD tilted ~30° clockwise in the photo:\n' +
+ '- tl might be at (30, 50) — top-left of the physical LCD glass\n' +
+ '- tr at (70, 30) — top-right corner is HIGHER in the image than top-left (lower y) because of the tilt\n' +
+ '- br at (85, 60) — bottom-right\n' +
+ '- bl at (45, 80) — bottom-left\n' +
+ 'Notice how the corners form a clearly tilted rectangle, NOT an axis-aligned one.\n\n' +
+ 'WRONG (this is a bounding box, not corners): tl(30,30), tr(85,30), br(85,80), bl(30,80) — all the same horizontal and vertical lines.\n\n' +
+ 'Labels are by LCD content orientation (digits upright):\n' +
+ '- "tl" = top-left corner of the LCD content (above the SYS number, on its left)\n' +
+ '- "tr" = top-right corner of the LCD content\n' +
+ '- "br" = bottom-right corner\n' +
+ '- "bl" = bottom-left corner\n\n' +
+ 'Use percentage coordinates (0-100) of the image dimensions.\n' +
+ 'Format: {"tl":{"x":N,"y":N},"tr":{"x":N,"y":N},"br":{"x":N,"y":N},"bl":{"x":N,"y":N}}\n' +
  'No other text.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Identify the 4 corners of the LCD screen on this BP monitor as percentages of the image. Label each corner relative to the LCD content orientation (digits upright).' }
+ { type: 'text', text: 'Identify the 4 PHYSICAL corners of the LCD glass in this photo. If the LCD is tilted, the corners must reflect that tilt — do not return a bounding box. Look at the actual edge where the LCD glass meets the device casing and identify where the 4 corners are.' }
  ]
  }]
  })
@@ -1240,14 +1247,59 @@ async function handleFiles(files) {
  const botAngle = Math.atan2(br.y - bl.y, br.x - bl.x);
  const avgAngleRad = (topAngle + botAngle) / 2;
  // Convert to degrees; negate because we want the rotation that DESKEWS
- // (canvas rotate: positive = CW; if LCD top edge has positive y-delta, LCD is tilted CW, so we rotate CCW = negative)
  rotation = -avgAngleRad * 180 / Math.PI;
- // Clamp to ±180
  if (rotation > 180) rotation -= 360;
  if (rotation < -180) rotation += 360;
  console.log('Pulse: 4 corners → bbox ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
- ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image), computed rotation=' + rotation.toFixed(1) + '°');
- // Regenerate thumbnail using crop + rotation
+ ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image), initial rotation=' + rotation.toFixed(1) + '°');
+
+ // REFINEMENT: Render with initial rotation, then ask Sonnet if more rotation is needed
+ try {
+ const firstRotated = renderRegion(crop, null, 800, rotation);
+ const refineResp = await fetch('https://api.anthropic.com/v1/messages', {
+ method: 'POST',
+ headers: {
+ 'Content-Type': 'application/json',
+ 'x-api-key': apiKey,
+ 'anthropic-version': '2023-06-01',
+ 'anthropic-dangerous-direct-browser-access': 'true'
+ },
+ body: JSON.stringify({
+ model: 'claude-sonnet-4-20250514',
+ max_tokens: 60,
+ temperature: 0,
+ system: 'Look at the LCD/digital display screen. Is it perfectly axis-aligned (its horizontal edges parallel to the image\'s horizontal axis)?\n' +
+ 'If YES, return {"add":0}.\n' +
+ 'If NO, return how many ADDITIONAL degrees of CLOCKWISE rotation are needed to make it perfectly axis-aligned. Positive=CW, negative=CCW. Be precise — small angles like 5, 10, 15, 20 are valid. If significantly tilted use larger numbers.\n' +
+ 'Format: {"add":NUMBER}. No other text.',
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: firstRotated.type, data: firstRotated.b64 } },
+ { type: 'text', text: 'Is this LCD axis-aligned? If not, how many more degrees of CW rotation are needed?' }
+ ]
+ }]
+ })
+ });
+ if (refineResp.ok) {
+ const refineData = await refineResp.json();
+ const refineText = refineData.content?.find(b => b.type === 'text')?.text || '';
+ console.log('Pulse: refine raw response:', refineText);
+ const rm = refineText.match(/\{[\s\S]*?\}/);
+ if (rm) {
+ const refineObj = JSON.parse(rm[0]);
+ if (typeof refineObj.add === 'number' && isFinite(refineObj.add) && Math.abs(refineObj.add) > 0) {
+ const before = rotation;
+ rotation += refineObj.add;
+ if (rotation > 180) rotation -= 360;
+ if (rotation < -180) rotation += 360;
+ console.log('Pulse: refinement added ' + refineObj.add + '°, total rotation now=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
+ }
+ }
+ }
+ } catch(e) { console.log('Pulse: refinement pass failed, sticking with initial rotation:', e.message); }
+
+ // Regenerate thumbnail using final crop + rotation
  try {
  const cropped = renderRegion(crop, null, 360, rotation);
  if (item.thumb && item.thumb.startsWith('blob:')) {
