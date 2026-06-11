@@ -1,10 +1,11 @@
-<!-- Pulse v5.11 — 2026-06-02 | Thumbnail spans both fields and actions rows; actions in column 2 only -->
+
+<!-- Pulse v6.0 — 2026-06-02 | Renamed to BP Pulse, hamburger menu, removed accordion dots, condensed drop zone, file type validation -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Pulse — Blood Pressure Tracker</title>
+<title>BP Pulse — Blood Pressure Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
@@ -76,6 +77,69 @@
  transition: var(--transition);
  }
  .export-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+ /* HAMBURGER MENU */
+ .hamburger-wrap { position: relative; }
+ .hamburger-btn {
+ background: transparent;
+ border: 1px solid var(--border);
+ color: var(--text2);
+ width: 38px;
+ height: 38px;
+ border-radius: var(--radius-sm);
+ cursor: pointer;
+ display: flex;
+ flex-direction: column;
+ justify-content: center;
+ align-items: center;
+ gap: 4px;
+ transition: var(--transition);
+ padding: 0;
+ }
+ .hamburger-btn:hover { border-color: var(--accent); }
+ .hamburger-btn:hover span { background: var(--accent); }
+ .hamburger-btn span {
+ display: block;
+ width: 18px;
+ height: 2px;
+ background: var(--text2);
+ border-radius: 1px;
+ transition: var(--transition);
+ }
+ .hamburger-menu {
+ position: absolute;
+ top: calc(100% + 6px);
+ right: 0;
+ min-width: 180px;
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+ padding: 6px;
+ display: none;
+ z-index: 100;
+ }
+ .hamburger-menu.open { display: block; }
+ .menu-item {
+ display: block;
+ width: 100%;
+ background: transparent;
+ border: none;
+ color: var(--text2);
+ text-align: left;
+ padding: 8px 12px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ cursor: pointer;
+ border-radius: 4px;
+ transition: var(--transition);
+ }
+ .menu-item:hover { background: var(--surface2); color: var(--accent); }
+ .menu-divider {
+ height: 1px;
+ background: var(--border);
+ margin: 4px 0;
+ }
 
  main { padding: 0 16px; max-width: 900px; margin: 0 auto; }
 
@@ -225,6 +289,7 @@
  transition: border-color var(--transition), background var(--transition);
  position: relative;
  }
+ .drop-zone.drop-zone-compact { padding: 16px 20px; }
  .drop-zone:hover, .drop-zone.dragover {
  border-color: var(--accent);
  background: rgba(232,98,74,0.05);
@@ -584,10 +649,15 @@
 <body>
 
 <header>
- <div class="logo">pul<span>se</span></div>
- <div style="display:flex;gap:8px;align-items:center">
- <button class="export-btn" id="apiKeyBtn" onclick="var p=document.getElementById('apiPanel');p.style.display=p.style.display==='none'?'block':'none';">⚙ API Key</button>
- <button class="export-btn" onclick="exportCSV()">↓ Export CSV</button>
+ <div class="logo">BP <span>Pulse</span></div>
+ <div class="hamburger-wrap">
+ <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleMenu(event)" aria-label="Menu">
+ <span></span><span></span><span></span>
+ </button>
+ <div class="hamburger-menu" id="hamburgerMenu">
+ <button class="menu-item" onclick="toggleApiPanel();closeMenu()">⚙ API Key</button>
+ <button class="menu-item" onclick="exportCSV();closeMenu()">↓ Export CSV</button>
+ </div>
  </div>
 </header>
 
@@ -611,7 +681,7 @@
  <!-- FDA CATEGORIES -->
  <div class="accordion" id="acc-fda">
  <div class="accordion-header" onclick="toggleAccordion('acc-fda')">
- <div class="accordion-title"><div class="dot"></div>FDA Blood Pressure Categories</div>
+ <div class="accordion-title">FDA BP Categories</div>
  <div class="chevron">▼</div>
  </div>
  <div class="accordion-body">
@@ -649,23 +719,21 @@
  <!-- DATA ENTRY -->
  <div class="accordion" id="acc-entry">
  <div class="accordion-header" onclick="toggleAccordion('acc-entry')">
- <div class="accordion-title"><div class="dot"></div>Add Measurement</div>
+ <div class="accordion-title">Add BP Measurement</div>
  <div class="chevron">▼</div>
  </div>
  <div class="accordion-body">
  <div class="accordion-inner">
  <div class="tabs">
- <button class="tab" id="tab-photo" onclick="switchTab('photo')">📷 Photo / Image</button>
+ <button class="tab" id="tab-photo" onclick="switchTab('photo')">Photo Entry</button>
  <button class="tab" id="tab-manual" onclick="switchTab('manual')">✏️ Manual Entry</button>
  </div>
 
  <!-- PHOTO TAB -->
  <div id="pane-photo">
- <div class="drop-zone" id="dropZone">
+ <div class="drop-zone drop-zone-compact" id="dropZone">
  <input type="file" accept=".png,.jpg,.jpeg,.heic,image/heic" multiple id="fileInput" onchange="handleFiles(this.files)" />
- <div class="dz-icon">📷</div>
- <p>Drag & drop photos here, or <span>browse to upload</span></p>
- <p class="photo-hint">Up to 10 images · PNG, JPG, JPEG, HEIC · Date/time pulled from photo metadata</p>
+ <p>Drag and drop or <span>browse</span> to upload up to 10 photos at a time.</p>
  </div>
  <div id="ocrQueue" class="ocr-queue"></div>
  <div id="commitAllBar" class="commit-all-bar" style="display:none">
@@ -715,7 +783,7 @@
  <!-- DATA DISPLAY -->
  <div class="accordion open" id="acc-data">
  <div class="accordion-header" onclick="toggleAccordion('acc-data')">
- <div class="accordion-title"><div class="dot"></div>Measurements &amp; Trends</div>
+ <div class="accordion-title">Measurements &amp; Trends</div>
  <div class="chevron">▼</div>
  </div>
  <div class="accordion-body">
@@ -833,6 +901,22 @@ function combineDT(d, t) {
 }
 
 // ─── ACCORDION ────────────────────────────────────────────────────────────────
+function toggleMenu(e) {
+ if (e) e.stopPropagation();
+ const m = document.getElementById('hamburgerMenu');
+ m.classList.toggle('open');
+}
+
+function closeMenu() {
+ document.getElementById('hamburgerMenu').classList.remove('open');
+}
+
+// Close hamburger when clicking outside
+document.addEventListener('click', (e) => {
+ const wrap = document.querySelector('.hamburger-wrap');
+ if (wrap && !wrap.contains(e.target)) closeMenu();
+});
+
 function toggleAccordion(id) {
  document.getElementById(id).classList.toggle('open');
 }
@@ -892,7 +976,9 @@ function clearApiKey() {
 }
 
 function updateApiKeyBtn() {
+ // Header button replaced by hamburger menu; this is now a no-op kept for compatibility
  const btn = document.getElementById('apiKeyBtn');
+ if (!btn) return;
  btn.textContent = getApiKey() ? '✓ API Key' : '⚙ API Key';
  btn.style.color = getApiKey() ? 'var(--green)' : '';
  btn.style.borderColor = getApiKey() ? 'var(--green)' : '';
@@ -928,9 +1014,17 @@ async function handleFiles(files) {
  return;
  }
  const allowed = ['image/png','image/jpeg','image/jpg','image/heic'];
- const list = Array.from(files).filter(f =>
+ const all = Array.from(files);
+ const list = all.filter(f =>
  allowed.includes(f.type.toLowerCase()) || f.name.toLowerCase().endsWith('.heic')
  );
+ const rejected = all.filter(f => !list.includes(f));
+ if (rejected.length) {
+ const names = rejected.map(f => f.name).join(', ');
+ alert('Unsupported file type' + (rejected.length > 1 ? 's' : '') + ': ' + names +
+ '\n\nSupported types: PNG, JPG, JPEG, HEIC');
+ }
+ if (list.length === 0) return;
  const toProcess = list.slice(0, 10);
 
  for (const file of toProcess) {
