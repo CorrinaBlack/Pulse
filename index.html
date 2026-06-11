@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.3 — 2026-06-02 | Deskew: continuous rotation angles for tilted devices, 25% bbox padding -->
+<!-- Pulse v6.4 — 2026-06-02 | Sharpened prompt for geometric edge alignment, raw response logging -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1184,18 +1184,25 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
- max_tokens: 140,
+ max_tokens: 200,
  temperature: 0,
- system: 'Return ONLY a JSON object describing the LCD/digital display on the blood pressure monitor.\n' +
- '- Use percentage coordinates (0-100) relative to the image for the axis-aligned bounding box.\n' +
- '- "rotation" is the angle in degrees (-180 to 180) needed to rotate the IMAGE CLOCKWISE so the LCD digits read upright and horizontal. Positive=rotate CW, negative=rotate CCW. If the LCD already reads upright, return 0. If the device is on its side, use ±90. If the LCD is slightly tilted (like a photo taken at an angle), return the precise tilt (e.g., 17, -23, 45).\n' +
+ system: 'You analyze a photo of a blood pressure monitor.\n\n' +
+ 'Find the rectangular LCD/digital display screen and return TWO things:\n\n' +
+ '1. BOUNDING BOX: the smallest axis-aligned rectangle in the IMAGE that fully contains the LCD. Use percentage coordinates (0-100) where x,y is the top-left corner.\n\n' +
+ '2. ROTATION ANGLE: the geometric angle the LCD\'s edges make with the image\'s axes.\n' +
+ '- 0 = the LCD\'s edges are PERFECTLY parallel to the image\'s horizontal/vertical edges\n' +
+ '- Positive number = the image needs to rotate CLOCKWISE by that many degrees to make the LCD\'s edges horizontal/vertical\n' +
+ '- Negative number = the image needs to rotate COUNTER-CLOCKWISE\n' +
+ '- Examples: if the LCD\'s top edge slopes downward to the right (right side is lower), the rotation is NEGATIVE (image needs to go counter-clockwise to deskew). If the LCD\'s top edge slopes downward to the left, rotation is POSITIVE.\n' +
+ '- This is NOT about whether the digits are readable — it\'s about the geometric tilt of the LCD rectangle in the image. Even if the digits are readable, the LCD may still be tilted.\n' +
+ '- Range: -180 to 180. For slight tilts use small angles (5, 10, 15, 20...). For sideways photos use ±90. For upside-down use 180.\n\n' +
  'Format: {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT,"rotation":DEGREES}\n' +
  'No other text.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Find the LCD display showing blood pressure numbers. Return its bounding box (percentages) and the precise rotation in degrees needed to make the digits read upright and horizontal.' }
+ { type: 'text', text: 'Find the rectangular LCD display on this BP monitor. Return its bounding box AND the rotation angle needed to deskew it (make its edges align with horizontal/vertical). Look carefully at the LCD\'s edges — even small tilts matter.' }
  ]
  }]
  })
@@ -1203,6 +1210,7 @@ async function handleFiles(files) {
  if (bboxResp.ok) {
  const bboxData = await bboxResp.json();
  const bboxText = bboxData.content?.find(b => b.type === 'text')?.text || '';
+ console.log('Pulse: Sonnet raw response:', bboxText);
  const bm = bboxText.match(/\{[\s\S]*?\}/);
  if (bm) {
  const box = JSON.parse(bm[0]);
