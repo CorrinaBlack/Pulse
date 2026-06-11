@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.4 — 2026-06-02 | Sharpened prompt for geometric edge alignment, raw response logging -->
+<!-- Pulse v6.6 — 2026-06-02 | Sonnet returns 4 LCD corners; bbox + precise rotation computed geometrically -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1187,22 +1187,20 @@ async function handleFiles(files) {
  max_tokens: 200,
  temperature: 0,
  system: 'You analyze a photo of a blood pressure monitor.\n\n' +
- 'Find the rectangular LCD/digital display screen and return TWO things:\n\n' +
- '1. BOUNDING BOX: the smallest axis-aligned rectangle in the IMAGE that fully contains the LCD. Use percentage coordinates (0-100) where x,y is the top-left corner.\n\n' +
- '2. ROTATION ANGLE: the geometric angle the LCD\'s edges make with the image\'s axes.\n' +
- '- 0 = the LCD\'s edges are PERFECTLY parallel to the image\'s horizontal/vertical edges\n' +
- '- Positive number = the image needs to rotate CLOCKWISE by that many degrees to make the LCD\'s edges horizontal/vertical\n' +
- '- Negative number = the image needs to rotate COUNTER-CLOCKWISE\n' +
- '- Examples: if the LCD\'s top edge slopes downward to the right (right side is lower), the rotation is NEGATIVE (image needs to go counter-clockwise to deskew). If the LCD\'s top edge slopes downward to the left, rotation is POSITIVE.\n' +
- '- This is NOT about whether the digits are readable — it\'s about the geometric tilt of the LCD rectangle in the image. Even if the digits are readable, the LCD may still be tilted.\n' +
- '- Range: -180 to 180. For slight tilts use small angles (5, 10, 15, 20...). For sideways photos use ±90. For upside-down use 180.\n\n' +
- 'Format: {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT,"rotation":DEGREES}\n' +
+ 'Find the 4 corners of the rectangular LCD/digital display screen and return them as percentage coordinates (0-100) of the image.\n\n' +
+ 'Label the corners by their position relative to the LCD content (as you would read it, with digits right-side up):\n' +
+ '- "tl" = top-left corner of the LCD (the corner above and to the left of the SYS/systolic number)\n' +
+ '- "tr" = top-right corner of the LCD\n' +
+ '- "br" = bottom-right corner of the LCD (below the pulse number, on the right)\n' +
+ '- "bl" = bottom-left corner of the LCD\n\n' +
+ 'These are the 4 corners as if you could touch them on the physical LCD glass — NOT the 4 corners of an axis-aligned bounding rectangle. If the LCD is tilted in the photo, the corners will form a tilted quadrilateral.\n\n' +
+ 'Format: {"tl":{"x":NUMBER,"y":NUMBER},"tr":{"x":NUMBER,"y":NUMBER},"br":{"x":NUMBER,"y":NUMBER},"bl":{"x":NUMBER,"y":NUMBER}}\n' +
  'No other text.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Find the rectangular LCD display on this BP monitor. Return its bounding box AND the rotation angle needed to deskew it (make its edges align with horizontal/vertical). Look carefully at the LCD\'s edges — even small tilts matter.' }
+ { type: 'text', text: 'Identify the 4 corners of the LCD screen on this BP monitor as percentages of the image. Label each corner relative to the LCD content orientation (digits upright).' }
  ]
  }]
  })
@@ -1211,24 +1209,45 @@ async function handleFiles(files) {
  const bboxData = await bboxResp.json();
  const bboxText = bboxData.content?.find(b => b.type === 'text')?.text || '';
  console.log('Pulse: Sonnet raw response:', bboxText);
- const bm = bboxText.match(/\{[\s\S]*?\}/);
+ const bm = bboxText.match(/\{[\s\S]*?\}\s*\}\s*\}/) || bboxText.match(/\{[\s\S]*\}/);
  if (bm) {
- const box = JSON.parse(bm[0]);
- if (box.x != null && box.y != null && box.w != null && box.h != null) {
- const padX = box.w * 0.25;
- const padY = box.h * 0.25;
- const x1 = Math.max(0, box.x - padX) / 100 * natW;
- const y1 = Math.max(0, box.y - padY) / 100 * natH;
- const x2 = Math.min(100, box.x + box.w + padX) / 100 * natW;
- const y2 = Math.min(100, box.y + box.h + padY) / 100 * natH;
- crop = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
- if (box.rotation != null && typeof box.rotation === 'number' && isFinite(box.rotation)) {
- // Clamp to reasonable range
- rotation = Math.max(-180, Math.min(180, box.rotation));
- }
- console.log('Pulse: LCD bbox + 25% padding: ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
- ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image), rotation=' + rotation + '°');
- // Regenerate thumbnail using crop + rotation (so user sees what the AI sees)
+ const corners = JSON.parse(bm[0]);
+ if (corners.tl && corners.tr && corners.br && corners.bl) {
+ // Convert percentages to pixels
+ const toP = c => ({ x: c.x/100 * natW, y: c.y/100 * natH });
+ const tl = toP(corners.tl), tr = toP(corners.tr);
+ const br = toP(corners.br), bl = toP(corners.bl);
+
+ // Axis-aligned bounding box of the 4 corners
+ const xs = [tl.x, tr.x, br.x, bl.x];
+ const ys = [tl.y, tr.y, br.y, bl.y];
+ const x1 = Math.min(...xs), x2 = Math.max(...xs);
+ const y1 = Math.min(...ys), y2 = Math.max(...ys);
+ const bw = x2 - x1, bh = y2 - y1;
+
+ // 20% padding around bbox
+ const pad = 0.20;
+ const padX = bw * pad, padY = bh * pad;
+ const cx1 = Math.max(0, x1 - padX);
+ const cy1 = Math.max(0, y1 - padY);
+ const cx2 = Math.min(natW, x2 + padX);
+ const cy2 = Math.min(natH, y2 + padY);
+ crop = { x: Math.round(cx1), y: Math.round(cy1), w: Math.round(cx2 - cx1), h: Math.round(cy2 - cy1) };
+
+ // Compute rotation from the average angle of the top and bottom edges
+ // Top edge: tl → tr; bottom edge: bl → br
+ const topAngle = Math.atan2(tr.y - tl.y, tr.x - tl.x);
+ const botAngle = Math.atan2(br.y - bl.y, br.x - bl.x);
+ const avgAngleRad = (topAngle + botAngle) / 2;
+ // Convert to degrees; negate because we want the rotation that DESKEWS
+ // (canvas rotate: positive = CW; if LCD top edge has positive y-delta, LCD is tilted CW, so we rotate CCW = negative)
+ rotation = -avgAngleRad * 180 / Math.PI;
+ // Clamp to ±180
+ if (rotation > 180) rotation -= 360;
+ if (rotation < -180) rotation += 360;
+ console.log('Pulse: 4 corners → bbox ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
+ ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image), computed rotation=' + rotation.toFixed(1) + '°');
+ // Regenerate thumbnail using crop + rotation
  try {
  const cropped = renderRegion(crop, null, 360, rotation);
  if (item.thumb && item.thumb.startsWith('blob:')) {
@@ -1237,8 +1256,12 @@ async function handleFiles(files) {
  item.thumb = cropped.dataUrl;
  renderOCRQueue();
  } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
+ } else {
+ console.log('Pulse: Sonnet did not return 4 corners, falling back to full image');
  }
  }
+ } else {
+ console.log('Pulse: Sonnet bbox call failed:', bboxResp.status);
  }
  } catch(e) { console.log('Pulse: bbox detection failed, will use full image:', e.message); }
 
