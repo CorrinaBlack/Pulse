@@ -1,5 +1,4 @@
-
-<!-- Pulse v6.0 — 2026-06-02 | Renamed to BP Pulse, hamburger menu, removed accordion dots, condensed drop zone, file type validation -->
+<!-- Pulse v6.1 — 2026-06-02 | 📷 on Photo tab, 3-row OCR layout (filename+date+time / device+sys+dia+bpm / notes+actions), thumbnail cropped+rotated to LCD -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -309,13 +308,14 @@
  padding: 14px;
  display: grid;
  grid-template-columns: auto 1fr;
- grid-template-rows: 1fr auto;
  gap: 12px;
- align-items: start;
+ align-items: stretch;
  }
- .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1 / -1; align-self: stretch; }
- .ocr-item > .ocr-body { grid-column: 2; grid-row: 1; min-width: 0; }
- .ocr-item > .ocr-actions { grid-column: 2; grid-row: 2; justify-content: flex-end; }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; align-self: stretch; }
+ .ocr-item > .ocr-body { grid-column: 2; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+ .ocr-item > .ocr-body .ocr-actions-fallback {
+ display: flex; justify-content: flex-end; gap: 8px; margin-top: auto;
+ }
  .ocr-thumb-wrap {
  width: 120px;
  flex-shrink: 0;
@@ -343,10 +343,9 @@
  text-align: center;
  }
  @media (max-width: 700px) {
- .ocr-item { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
- .ocr-item > .ocr-thumb-wrap { grid-column: 1; grid-row: 1; width: 100%; max-width: 240px; align-self: auto; }
- .ocr-item > .ocr-body { grid-column: 1; grid-row: 2; }
- .ocr-item > .ocr-actions { grid-column: 1; grid-row: 3; justify-content: flex-end; }
+ .ocr-item { grid-template-columns: 1fr; }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; width: 100%; max-width: 240px; align-self: auto; }
+ .ocr-item > .ocr-body { grid-column: 1; }
  }
  .ocr-item.warning { border-color: var(--yellow); }
  .ocr-warn { font-size: 12px; color: var(--yellow); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
@@ -405,40 +404,55 @@
  white-space: nowrap;
  }
 
- /* CSS grid for ready OCR items — aligns Date↔Notes left, Device↔Notes right */
+ /* OCR ready-item layout: 3 rows
+ * Row 1: filename | date | time
+ * Row 2: device | sys | dia | bpm
+ * Row 3: notes (flex) | commit | remove */
  .ocr-grid {
  display: grid;
- grid-template-columns: minmax(0, 1fr) 140px 100px 140px;
+ grid-template-columns: minmax(0, 1fr) 140px 100px;
  column-gap: 10px;
- row-gap: 6px;
+ row-gap: 8px;
  align-items: end;
  }
  .ocr-grid .ocr-filename { grid-column: 1; grid-row: 1; align-self: end; }
  .ocr-grid .ocr-col-date { grid-column: 2; grid-row: 1; }
  .ocr-grid .ocr-col-time { grid-column: 3; grid-row: 1; }
- .ocr-grid .ocr-col-device { grid-column: 4; grid-row: 1; }
- .ocr-grid .ocr-meas-group {
- grid-column: 1; grid-row: 2;
- display: flex; gap: 8px;
+
+ .ocr-grid .ocr-row-meas {
+ grid-column: 1 / -1; grid-row: 2;
+ display: flex; gap: 10px; align-items: end;
  min-width: 0;
  }
- .ocr-grid .ocr-meas-group .ocr-field { flex: 1; min-width: 0; }
- .ocr-grid .ocr-col-notes { grid-column: 2 / -1; grid-row: 2; }
- .ocr-grid .ocr-col-notes input { width: 100%; }
+ .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 140px; min-width: 0; }
+ .ocr-grid .ocr-row-meas .ocr-field-sys,
+ .ocr-grid .ocr-row-meas .ocr-field-dia,
+ .ocr-grid .ocr-row-meas .ocr-field-bpm { flex: 0 0 90px; }
+
+ .ocr-grid .ocr-row-bottom {
+ grid-column: 1 / -1; grid-row: 3;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .ocr-grid .ocr-row-bottom .ocr-col-notes { flex: 1; min-width: 0; }
+ .ocr-grid .ocr-row-bottom .ocr-col-notes input { width: 100%; }
+ .ocr-grid .ocr-row-bottom .ocr-actions {
+ flex: 0 0 auto;
+ align-self: flex-end;
+ padding-bottom: 0;
+ }
  .ocr-grid .ocr-col-date input,
  .ocr-grid .ocr-col-time input,
  .ocr-grid .ocr-col-device input { width: 100%; }
 
  @media (max-width: 700px) {
- .ocr-grid {
- grid-template-columns: 1fr 1fr;
- }
+ .ocr-grid { grid-template-columns: 1fr 1fr; }
  .ocr-grid .ocr-filename { grid-column: 1 / -1; grid-row: auto; }
  .ocr-grid .ocr-col-date { grid-column: 1; grid-row: auto; }
  .ocr-grid .ocr-col-time { grid-column: 2; grid-row: auto; }
- .ocr-grid .ocr-col-device { grid-column: 1 / -1; grid-row: auto; }
- .ocr-grid .ocr-meas-group { grid-column: 1 / -1; grid-row: auto; }
- .ocr-grid .ocr-col-notes { grid-column: 1 / -1; grid-row: auto; }
+ .ocr-grid .ocr-row-meas { flex-wrap: wrap; }
+ .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 100%; }
+ .ocr-grid .ocr-row-bottom { flex-wrap: wrap; }
  }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
@@ -725,7 +739,7 @@
  <div class="accordion-body">
  <div class="accordion-inner">
  <div class="tabs">
- <button class="tab" id="tab-photo" onclick="switchTab('photo')">Photo Entry</button>
+ <button class="tab" id="tab-photo" onclick="switchTab('photo')">📷 Photo Entry</button>
  <button class="tab" id="tab-manual" onclick="switchTab('manual')">✏️ Manual Entry</button>
  </div>
 
@@ -1068,14 +1082,19 @@ async function handleFiles(files) {
  const MAX_BASE64 = 5242880 - 50000;
  const OPUS_MAX_DIM = 2576;
 
- // Helper: render a region of the image with optional filter, scaled to fit target
+ // Helper: render a region of the image with optional filter + rotation, scaled to fit
  // crop = {x, y, w, h} in source pixels; or null for full image
- const renderRegion = (crop, filterCss, maxDim) => {
+ // rotation = 0 | 90 | 180 | 270 degrees clockwise
+ const renderRegion = (crop, filterCss, maxDim, rotation = 0) => {
  const sx = crop ? crop.x : 0;
  const sy = crop ? crop.y : 0;
  const sw = crop ? crop.w : natW;
  const sh = crop ? crop.h : natH;
- let tw = sw, th = sh;
+ const rot = ((Math.round(rotation/90) * 90) % 360 + 360) % 360;
+ const swap = (rot === 90 || rot === 270);
+ const outW = swap ? sh : sw;
+ const outH = swap ? sw : sh;
+ let tw = outW, th = outH;
  if (Math.max(tw, th) > maxDim) {
  const s = maxDim / Math.max(tw, th);
  tw = Math.round(tw * s);
@@ -1087,16 +1106,22 @@ async function handleFiles(files) {
  const cx = c.getContext('2d');
  cx.imageSmoothingQuality = 'high';
  if (filterCss) cx.filter = filterCss;
- cx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+ const scale = swap ? (tw / sh) : (tw / sw);
+ const drawW = sw * scale;
+ const drawH = sh * scale;
+ cx.save();
+ cx.translate(tw/2, th/2);
+ if (rot) cx.rotate(rot * Math.PI / 180);
+ cx.drawImage(img, sx, sy, sw, sh, -drawW/2, -drawH/2, drawW, drawH);
+ cx.restore();
  cx.filter = 'none';
- // Prefer PNG, fall back to JPEG
  const pUrl = c.toDataURL('image/png');
  const pB64 = pUrl.split(',')[1];
- if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png', w: tw, h: th };
+ if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png', w: tw, h: th, dataUrl: pUrl };
  for (let q = 0.96; q >= 0.18; q -= 0.04) {
  const jUrl = c.toDataURL('image/jpeg', q);
  const b64 = jUrl.split(',')[1];
- if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg', w: tw, h: th };
+ if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg', w: tw, h: th, dataUrl: jUrl };
  }
  throw new Error('Could not compress image small enough');
  };
@@ -1138,11 +1163,12 @@ async function handleFiles(files) {
  return JSON.parse(m[0]);
  };
 
- // PASS 1: Cheap bbox detection with Sonnet on a small preview
+ // PASS 1: Cheap bbox + rotation detection with Sonnet
  let crop = null;
+ let rotation = 0;
  try {
  const preview = renderRegion(null, null, 1200);
- console.log('Pulse: Pass 1 — detecting LCD bbox with Sonnet');
+ console.log('Pulse: Pass 1 — detecting LCD bbox + rotation with Sonnet');
  const bboxResp = await fetch('https://api.anthropic.com/v1/messages', {
  method: 'POST',
  headers: {
@@ -1153,14 +1179,14 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
- max_tokens: 100,
+ max_tokens: 120,
  temperature: 0,
- system: 'Return ONLY a JSON object with the bounding box of the LCD/digital display screen showing the blood pressure numbers. Use percentage coordinates (0-100): {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
+ system: 'Return ONLY a JSON object with the LCD/digital display location and orientation. Use percentage coordinates (0-100) for the box, and a clockwise rotation in degrees (0, 90, 180, or 270) that would make the digits on the LCD read upright and left-to-right. Format: {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT,"rotation":DEGREES}. If the LCD already reads upright, rotation is 0. No other text.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Where is the LCD display showing the blood pressure numbers? Return bounding box as percentages.' }
+ { type: 'text', text: 'Find the LCD display showing blood pressure numbers. Return its bounding box (percentages) and the rotation needed to make the digits read upright.' }
  ]
  }]
  })
@@ -1172,7 +1198,6 @@ async function handleFiles(files) {
  if (bm) {
  const box = JSON.parse(bm[0]);
  if (box.x != null && box.y != null && box.w != null && box.h != null) {
- // Apply 10% padding around detected bbox
  const padX = box.w * 0.10;
  const padY = box.h * 0.10;
  const x1 = Math.max(0, box.x - padX) / 100 * natW;
@@ -1180,23 +1205,35 @@ async function handleFiles(files) {
  const x2 = Math.min(100, box.x + box.w + padX) / 100 * natW;
  const y2 = Math.min(100, box.y + box.h + padY) / 100 * natH;
  crop = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
+ if (box.rotation != null && [0,90,180,270].includes(box.rotation)) {
+ rotation = box.rotation;
+ }
  console.log('Pulse: LCD bbox + 10% padding: ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
- ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image)');
+ ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image), rotation=' + rotation + '°');
+ // Regenerate thumbnail using crop + rotation (so user sees what the AI sees)
+ try {
+ const cropped = renderRegion(crop, null, 360, rotation);
+ if (item.thumb && item.thumb.startsWith('blob:')) {
+ try { URL.revokeObjectURL(item.thumb); } catch(e) {}
+ }
+ item.thumb = cropped.dataUrl;
+ renderOCRQueue();
+ } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
  }
  }
  }
  } catch(e) { console.log('Pulse: bbox detection failed, will use full image:', e.message); }
 
- // PASS 2: Send cropped (or full) image with grayscale + contrast preprocessing to Opus 4.7
- console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (crop ? ' (cropped)' : ' (full)'));
- const encoded = renderRegion(crop, 'grayscale(1) contrast(1.5) brightness(1.05)', OPUS_MAX_DIM);
+ // PASS 2: Send cropped+rotated image with grayscale + contrast preprocessing to Opus 4.7
+ console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (crop ? ' (cropped)' : ' (full)') + (rotation ? ', rotation=' + rotation + '°' : ''));
+ const encoded = renderRegion(crop, 'grayscale(1) contrast(1.5) brightness(1.05)', OPUS_MAX_DIM, rotation);
  console.log('Pulse: attempt 1 — ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
  let parsed = await callOCR(encoded);
 
  // Retry without preprocessing if any value is null (catches cases where grayscale loses needed info)
  if (parsed.systolic == null || parsed.diastolic == null || parsed.bpm == null) {
  console.log('Pulse: null value detected, retrying without preprocessing (original colors)');
- const encoded2 = renderRegion(crop, null, OPUS_MAX_DIM);
+ const encoded2 = renderRegion(crop, null, OPUS_MAX_DIM, rotation);
  console.log('Pulse: attempt 2 — ' + (encoded2.b64.length/1e6).toFixed(1) + 'MB ' + encoded2.type + ' at ' + encoded2.w + 'x' + encoded2.h);
  const retry = await callOCR(encoded2);
  // Merge: prefer non-null from either attempt
@@ -1348,13 +1385,19 @@ function renderOCRQueue() {
  <div class="ocr-filename">📋 <span>${item.file?.name || 'Image'}</span></div>
  <div class="ocr-field ocr-col-date"><label>Date</label><input type="date" class="dt-input" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
  <div class="ocr-field ocr-col-time"><label>Time</label><input type="time" class="dt-input" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
+ <div class="ocr-row-meas">
  <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
- <div class="ocr-meas-group">
- <div class="ocr-field"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
- <div class="ocr-field"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
- <div class="ocr-field"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
  </div>
+ <div class="ocr-row-bottom">
  <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+ <div class="ocr-actions">
+ <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Commit</button>
+ <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
+ </div>
+ </div>
  </div>
  ` : `
  <div class="ocr-header-row">
@@ -1363,14 +1406,13 @@ function renderOCRQueue() {
  <span>${item.file?.name || 'Image'}</span>
  </div>
  </div>
- `}
  ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
  ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
- ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
- </div>
- <div class="ocr-actions">
- ${item.status === 'ready' ? `<button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Commit</button>` : ''}
+ <div class="ocr-actions-fallback">
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
+ </div>
+ `}
+ ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
  </div>
  </div>`;
  }).join('');
