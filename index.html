@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.10 — 2026-06-02 | Post-rotation tight crop to LCD shape (no empty corners), 25% padding around device -->
+<!-- Pulse v6.11 — 2026-06-12 | Cardinal orientation check (90/180/270°) via Sonnet after edge detection, with dimension swap for sideways devices -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1331,13 +1331,67 @@ async function handleFiles(files) {
  rotation = detectRotationFromEdges(edgeCanvas);
  } catch(e) { console.log('Pulse: edge detection failed, rotation=0:', e.message); rotation = 0; }
 
- // Compute LCD center + 25%-padded output dimensions for the deskewed render
+ // Compute LCD center and base output dimensions (LCD + 25% padding each side)
  const lcdCenterX = (box.x + box.w/2) / 100 * natW;
  const lcdCenterY = (box.y + box.h/2) / 100 * natH;
  const lcdW_px = box.w / 100 * natW;
  const lcdH_px = box.h / 100 * natH;
- const outSrcW = lcdW_px * 1.5; // 25% padding on each side → 1.5x total
- const outSrcH = lcdH_px * 1.5;
+
+ // CARDINAL ORIENTATION CHECK: edge detection only aligns rectangular edges; if the
+ // device is on its side or upside down, the LCD edges are already axis-aligned but
+ // text is rotated 90/180/270°. Ask Sonnet which cardinal rotation is needed.
+ try {
+ // Render a small preview with edge-detection rotation applied
+ const previewW_initial = lcdW_px * 1.5;
+ const previewH_initial = lcdH_px * 1.5;
+ const cardinalPreview = renderDeskewed(lcdCenterX, lcdCenterY, previewW_initial, previewH_initial, rotation, null, 500);
+ console.log('Pulse: cardinal check — asking Sonnet for orientation correction');
+ const cardinalResp = await fetch('https://api.anthropic.com/v1/messages', {
+ method: 'POST',
+ headers: {
+ 'Content-Type': 'application/json',
+ 'x-api-key': apiKey,
+ 'anthropic-version': '2023-06-01',
+ 'anthropic-dangerous-direct-browser-access': 'true'
+ },
+ body: JSON.stringify({
+ model: 'claude-sonnet-4-20250514',
+ max_tokens: 40,
+ temperature: 0,
+ system: 'You see an LCD/digital display from a blood pressure monitor. The image may need to be rotated so the text reads normally (left-to-right, top-to-bottom). Choose the additional clockwise rotation needed: 0 (already correct), 90, 180, or 270. Return ONLY a JSON object: {"add":NUMBER}. No other text.',
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: cardinalPreview.type, data: cardinalPreview.b64 } },
+ { type: 'text', text: 'How many degrees of additional clockwise rotation does this LCD image need to make the text read normally (left-to-right, top-to-bottom)? Choose only: 0, 90, 180, or 270.' }
+ ]
+ }]
+ })
+ });
+ if (cardinalResp.ok) {
+ const respData = await cardinalResp.json();
+ const respText = respData.content?.find(b => b.type === 'text')?.text || '';
+ console.log('Pulse: cardinal raw response:', respText);
+ const cm = respText.match(/\{[\s\S]*?\}/);
+ if (cm) {
+ const cardinal = JSON.parse(cm[0]);
+ if ([0, 90, 180, 270].includes(cardinal.add) && cardinal.add !== 0) {
+ const before = rotation;
+ rotation += cardinal.add;
+ console.log('Pulse: cardinal correction +' + cardinal.add + '°, total rotation=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
+ } else {
+ console.log('Pulse: cardinal check says no additional rotation needed');
+ }
+ }
+ }
+ } catch(e) { console.log('Pulse: cardinal check failed, keeping edge-detection rotation:', e.message); }
+
+ // Determine output dimensions based on whether final rotation swaps width/height
+ const totalRotMod = ((rotation % 360) + 360) % 360;
+ const swap = (totalRotMod >= 45 && totalRotMod < 135) || (totalRotMod >= 225 && totalRotMod < 315);
+ const outSrcW = (swap ? lcdH_px : lcdW_px) * 1.5;
+ const outSrcH = (swap ? lcdW_px : lcdH_px) * 1.5;
+ if (swap) console.log('Pulse: dimensions swapped for cardinal rotation (device was sideways)');
 
  // Regenerate thumbnail using deskewed render (tight LCD-shaped crop, no empty corners)
  try {
