@@ -1,4 +1,5 @@
-<!-- Pulse v6.8 — 2026-06-02 | Rotation refinement: 2nd Sonnet pass on initially-rotated image to detect remaining tilt -->
+
+<!-- Pulse v6.9 — 2026-06-02 | Client-side edge detection (Sobel histogram) for rotation; back to simple bbox prompt -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -897,6 +898,70 @@ function nowLocalISO() {
  return new Date(d - off).toISOString().slice(0,16);
 }
 
+// Detect rotation angle (in degrees, CW to apply for deskewing) from the dominant
+// edge directions in a canvas. Uses Sobel gradient + angle histogram, then finds
+// the tilt θ ∈ [-44, 45] where gradient peaks at θ and θ+90 give maximum energy
+// (i.e., the LCD's perpendicular edge pairs would be axis-aligned after rotation).
+function detectRotationFromEdges(canvas) {
+ try {
+ const w = canvas.width, h = canvas.height;
+ const ctx = canvas.getContext('2d');
+ const imgData = ctx.getImageData(0, 0, w, h);
+ const data = imgData.data;
+ // Grayscale
+ const gray = new Float32Array(w * h);
+ for (let i = 0; i < w * h; i++) {
+ gray[i] = 0.299 * data[i*4] + 0.587 * data[i*4+1] + 0.114 * data[i*4+2];
+ }
+ // Sobel + histogram of gradient angles in [0, 180)
+ const histogram = new Float32Array(180);
+ let totalMass = 0;
+ for (let y = 1; y < h - 1; y++) {
+ for (let x = 1; x < w - 1; x++) {
+ const idx = y * w + x;
+ const gx = -gray[idx - w - 1] + gray[idx - w + 1]
+ - 2 * gray[idx - 1] + 2 * gray[idx + 1]
+ - gray[idx + w - 1] + gray[idx + w + 1];
+ const gy = -gray[idx - w - 1] - 2 * gray[idx - w] - gray[idx - w + 1]
+ + gray[idx + w - 1] + 2 * gray[idx + w] + gray[idx + w + 1];
+ const mag = Math.sqrt(gx * gx + gy * gy);
+ if (mag < 40) continue;
+ let angle = Math.atan2(gy, gx) * 180 / Math.PI;
+ angle = (angle + 180) % 180;
+ histogram[Math.floor(angle) % 180] += mag;
+ totalMass += mag;
+ }
+ }
+ if (totalMass < 1000) {
+ console.log('Pulse: edge detection found insufficient edge energy, returning 0°');
+ return 0;
+ }
+ // Find tilt θ ∈ [-44, 45] that maximizes histogram[θ] + histogram[θ+90]
+ // (with a small ±1° smoothing window)
+ let bestTilt = 0;
+ let bestScore = 0;
+ for (let t = -44; t <= 45; t++) {
+ let score = 0;
+ for (let d = -1; d <= 1; d++) {
+ const a = ((t + d) % 180 + 180) % 180;
+ const b = ((t + d + 90) % 180 + 180) % 180;
+ score += histogram[a] + histogram[b];
+ }
+ if (score > bestScore) {
+ bestScore = score;
+ bestTilt = t;
+ }
+ }
+ // Deskew rotation = -tilt (canvas rotate positive = CW)
+ const deskew = -bestTilt;
+ console.log('Pulse: edge-detection tilt=' + bestTilt + '° → deskew rotation=' + deskew + '°');
+ return deskew;
+ } catch(e) {
+ console.log('Pulse: edge detection failed:', e.message);
+ return 0;
+ }
+}
+
 // Split ISO datetime (YYYY-MM-DDTHH:MM) into separate date + time strings
 function splitDT(iso) {
  if (!iso || !iso.includes('T')) {
@@ -1167,12 +1232,12 @@ async function handleFiles(files) {
  return JSON.parse(m[0]);
  };
 
- // PASS 1: Cheap bbox + rotation detection with Sonnet
+ // PASS 1: Cheap bbox detection with Sonnet (just bbox, rotation via edge detection)
  let crop = null;
  let rotation = 0;
  try {
  const preview = renderRegion(null, null, 1200);
- console.log('Pulse: Pass 1 — detecting LCD bbox + rotation with Sonnet');
+ console.log('Pulse: Pass 1 — detecting LCD bbox with Sonnet');
  const bboxResp = await fetch('https://api.anthropic.com/v1/messages', {
  method: 'POST',
  headers: {
@@ -1183,31 +1248,14 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-sonnet-4-20250514',
- max_tokens: 250,
+ max_tokens: 120,
  temperature: 0,
- system: 'You analyze a photo of a blood pressure monitor.\n\n' +
- 'Find the 4 PHYSICAL corners of the rectangular LCD glass — the actual corner positions as they appear in the photo, NOT a bounding box.\n\n' +
- 'CRITICAL: If the LCD is tilted in the photo (taken at an angle, or device on its side), the 4 corners will form a TILTED quadrilateral, not an axis-aligned rectangle. The vertical offset between top-left and top-right reflects the tilt.\n\n' +
- 'Example for a LCD tilted ~30° clockwise in the photo:\n' +
- '- tl might be at (30, 50) — top-left of the physical LCD glass\n' +
- '- tr at (70, 30) — top-right corner is HIGHER in the image than top-left (lower y) because of the tilt\n' +
- '- br at (85, 60) — bottom-right\n' +
- '- bl at (45, 80) — bottom-left\n' +
- 'Notice how the corners form a clearly tilted rectangle, NOT an axis-aligned one.\n\n' +
- 'WRONG (this is a bounding box, not corners): tl(30,30), tr(85,30), br(85,80), bl(30,80) — all the same horizontal and vertical lines.\n\n' +
- 'Labels are by LCD content orientation (digits upright):\n' +
- '- "tl" = top-left corner of the LCD content (above the SYS number, on its left)\n' +
- '- "tr" = top-right corner of the LCD content\n' +
- '- "br" = bottom-right corner\n' +
- '- "bl" = bottom-left corner\n\n' +
- 'Use percentage coordinates (0-100) of the image dimensions.\n' +
- 'Format: {"tl":{"x":N,"y":N},"tr":{"x":N,"y":N},"br":{"x":N,"y":N},"bl":{"x":N,"y":N}}\n' +
- 'No other text.',
+ system: 'Return ONLY a JSON object with the axis-aligned bounding box of the LCD/digital display on this blood pressure monitor. Use percentage coordinates (0-100) where x,y is the top-left of the bounding box. Format: {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Identify the 4 PHYSICAL corners of the LCD glass in this photo. If the LCD is tilted, the corners must reflect that tilt — do not return a bounding box. Look at the actual edge where the LCD glass meets the device casing and identify where the 4 corners are.' }
+ { type: 'text', text: 'Where is the LCD display showing the blood pressure numbers? Return its bounding box as percentages.' }
  ]
  }]
  })
@@ -1215,91 +1263,37 @@ async function handleFiles(files) {
  if (bboxResp.ok) {
  const bboxData = await bboxResp.json();
  const bboxText = bboxData.content?.find(b => b.type === 'text')?.text || '';
- console.log('Pulse: Sonnet raw response:', bboxText);
- const bm = bboxText.match(/\{[\s\S]*?\}\s*\}\s*\}/) || bboxText.match(/\{[\s\S]*\}/);
+ console.log('Pulse: Sonnet bbox raw response:', bboxText);
+ const bm = bboxText.match(/\{[\s\S]*?\}/);
  if (bm) {
- const corners = JSON.parse(bm[0]);
- if (corners.tl && corners.tr && corners.br && corners.bl) {
- // Convert percentages to pixels
- const toP = c => ({ x: c.x/100 * natW, y: c.y/100 * natH });
- const tl = toP(corners.tl), tr = toP(corners.tr);
- const br = toP(corners.br), bl = toP(corners.bl);
+ const box = JSON.parse(bm[0]);
+ if (box.x != null && box.y != null && box.w != null && box.h != null) {
+ // Apply 25% padding around bbox
+ const padX = box.w * 0.25;
+ const padY = box.h * 0.25;
+ const x1 = Math.max(0, box.x - padX) / 100 * natW;
+ const y1 = Math.max(0, box.y - padY) / 100 * natH;
+ const x2 = Math.min(100, box.x + box.w + padX) / 100 * natW;
+ const y2 = Math.min(100, box.y + box.h + padY) / 100 * natH;
+ crop = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
+ console.log('Pulse: LCD bbox + 25% padding: ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
+ ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image)');
 
- // Axis-aligned bounding box of the 4 corners
- const xs = [tl.x, tr.x, br.x, bl.x];
- const ys = [tl.y, tr.y, br.y, bl.y];
- const x1 = Math.min(...xs), x2 = Math.max(...xs);
- const y1 = Math.min(...ys), y2 = Math.max(...ys);
- const bw = x2 - x1, bh = y2 - y1;
-
- // 20% padding around bbox
- const pad = 0.20;
- const padX = bw * pad, padY = bh * pad;
- const cx1 = Math.max(0, x1 - padX);
- const cy1 = Math.max(0, y1 - padY);
- const cx2 = Math.min(natW, x2 + padX);
- const cy2 = Math.min(natH, y2 + padY);
- crop = { x: Math.round(cx1), y: Math.round(cy1), w: Math.round(cx2 - cx1), h: Math.round(cy2 - cy1) };
-
- // Compute rotation from the average angle of the top and bottom edges
- // Top edge: tl → tr; bottom edge: bl → br
- const topAngle = Math.atan2(tr.y - tl.y, tr.x - tl.x);
- const botAngle = Math.atan2(br.y - bl.y, br.x - bl.x);
- const avgAngleRad = (topAngle + botAngle) / 2;
- // Convert to degrees; negate because we want the rotation that DESKEWS
- rotation = -avgAngleRad * 180 / Math.PI;
- if (rotation > 180) rotation -= 360;
- if (rotation < -180) rotation += 360;
- console.log('Pulse: 4 corners → bbox ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
- ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image), initial rotation=' + rotation.toFixed(1) + '°');
-
- // REFINEMENT: Render with initial rotation, then ask Sonnet if more rotation is needed
+ // Edge-detection rotation: render the cropped region at moderate resolution
+ // and run Sobel-based dominant edge angle detection
  try {
- const firstRotated = renderRegion(crop, null, 800, rotation);
- const refineResp = await fetch('https://api.anthropic.com/v1/messages', {
- method: 'POST',
- headers: {
- 'Content-Type': 'application/json',
- 'x-api-key': apiKey,
- 'anthropic-version': '2023-06-01',
- 'anthropic-dangerous-direct-browser-access': 'true'
- },
- body: JSON.stringify({
- model: 'claude-sonnet-4-20250514',
- max_tokens: 60,
- temperature: 0,
- system: 'Look at the LCD/digital display screen. Is it perfectly axis-aligned (its horizontal edges parallel to the image\'s horizontal axis)?\n' +
- 'If YES, return {"add":0}.\n' +
- 'If NO, return how many ADDITIONAL degrees of CLOCKWISE rotation are needed to make it perfectly axis-aligned. Positive=CW, negative=CCW. Be precise — small angles like 5, 10, 15, 20 are valid. If significantly tilted use larger numbers.\n' +
- 'Format: {"add":NUMBER}. No other text.',
- messages: [{
- role: 'user',
- content: [
- { type: 'image', source: { type: 'base64', media_type: firstRotated.type, data: firstRotated.b64 } },
- { type: 'text', text: 'Is this LCD axis-aligned? If not, how many more degrees of CW rotation are needed?' }
- ]
- }]
- })
- });
- if (refineResp.ok) {
- const refineData = await refineResp.json();
- const refineText = refineData.content?.find(b => b.type === 'text')?.text || '';
- console.log('Pulse: refine raw response:', refineText);
- const rm = refineText.match(/\{[\s\S]*?\}/);
- if (rm) {
- const refineObj = JSON.parse(rm[0]);
- if (typeof refineObj.add === 'number' && isFinite(refineObj.add) && Math.abs(refineObj.add) > 0) {
- const before = rotation;
- rotation += refineObj.add;
- if (rotation > 180) rotation -= 360;
- if (rotation < -180) rotation += 360;
- console.log('Pulse: refinement added ' + refineObj.add + '°, total rotation now=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
- }
- }
- }
- } catch(e) { console.log('Pulse: refinement pass failed, sticking with initial rotation:', e.message); }
+ const edgeCanvas = document.createElement('canvas');
+ const edgeMaxDim = 800;
+ const scale = Math.min(1, edgeMaxDim / Math.max(crop.w, crop.h));
+ edgeCanvas.width = Math.round(crop.w * scale);
+ edgeCanvas.height = Math.round(crop.h * scale);
+ const ectx = edgeCanvas.getContext('2d');
+ ectx.imageSmoothingQuality = 'high';
+ ectx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, edgeCanvas.width, edgeCanvas.height);
+ rotation = detectRotationFromEdges(edgeCanvas);
+ } catch(e) { console.log('Pulse: edge detection failed, rotation=0:', e.message); rotation = 0; }
 
- // Regenerate thumbnail using final crop + rotation
+ // Regenerate thumbnail using crop + rotation
  try {
  const cropped = renderRegion(crop, null, 360, rotation);
  if (item.thumb && item.thumb.startsWith('blob:')) {
@@ -1308,8 +1302,6 @@ async function handleFiles(files) {
  item.thumb = cropped.dataUrl;
  renderOCRQueue();
  } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
- } else {
- console.log('Pulse: Sonnet did not return 4 corners, falling back to full image');
  }
  }
  } else {
