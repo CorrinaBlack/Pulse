@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.12 — 2026-06-14 | Cardinal orientation check now uses Opus 4.7 (Sonnet returned prose); stricter JSON-only prompt -->
+<!-- Pulse v6.13 — 2026-06-14 | Cardinal check uses tool_use with required reasoning field + richer prompt with orientation cues (SYS at top, PUL at bottom, etc.) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1339,13 +1339,13 @@ async function handleFiles(files) {
 
  // CARDINAL ORIENTATION CHECK: edge detection only aligns rectangular edges; if the
  // device is on its side or upside down, the LCD edges are already axis-aligned but
- // text is rotated 90/180/270°. Ask Sonnet which cardinal rotation is needed.
+ // text is rotated 90/180/270°. Ask Opus (with tool_use) which cardinal rotation is needed.
  try {
  // Render a small preview with edge-detection rotation applied
  const previewW_initial = lcdW_px * 1.5;
  const previewH_initial = lcdH_px * 1.5;
  const cardinalPreview = renderDeskewed(lcdCenterX, lcdCenterY, previewW_initial, previewH_initial, rotation, null, 500);
- console.log('Pulse: cardinal check — asking Sonnet for orientation correction');
+ console.log('Pulse: cardinal check — asking Opus for orientation correction (tool_use)');
  const cardinalResp = await fetch('https://api.anthropic.com/v1/messages', {
  method: 'POST',
  headers: {
@@ -1356,32 +1356,63 @@ async function handleFiles(files) {
  },
  body: JSON.stringify({
  model: 'claude-opus-4-7',
- max_tokens: 40,
- system: 'You see a blood pressure monitor LCD that may be rotated. Determine how many degrees of CLOCKWISE rotation are needed so the digits/text read normally (left-to-right, top-to-bottom). Valid answers: 0 (already upright), 90 (currently rotated 90° CCW from upright, needs 90° CW), 180 (currently upside down), 270 (currently rotated 90° CW from upright, needs 270° CW). Output ONLY a JSON object in this exact format: {"add":NUMBER}. No prose, no explanation, no analysis. Just the JSON.',
+ max_tokens: 300,
+ system: 'You determine the cardinal rotation needed for a blood pressure monitor LCD photo so the device appears upright.\n\n' +
+ 'Cues for finding "up" on a BP monitor:\n' +
+ '1. Section labels: "SYS" or "SYSTOLIC" is at the TOP of the LCD when upright. "DIA" or "DIASTOLIC" is in the MIDDLE. "PUL", "PULSE", or "BPM" is at the BOTTOM.\n' +
+ '2. Numbers arrangement: When upright, the SYS number (largest, typically 90-200) is at the TOP, the DIA number (typically 50-130) is in the MIDDLE, the pulse number (typically 40-150) is at the BOTTOM.\n' +
+ '3. Brand name: "Omron", "iHealth", "Generation Guard", etc. reads horizontally (left-to-right) when upright.\n' +
+ '4. Physical buttons on the device body are at the BOTTOM when upright.\n' +
+ '5. Time of day / battery / mmHg unit indicators read horizontally when upright.\n\n' +
+ 'Call the set_rotation tool with your observations and answer. The rotation must be one of: 0 (already upright), 90 (image needs 90° CW rotation: currently the top of the device points LEFT in the image), 180 (image is upside down), 270 (image needs 90° CCW rotation, i.e., 270° CW: currently the top of the device points RIGHT in the image).',
+ tools: [{
+ name: 'set_rotation',
+ description: 'Report the cardinal rotation needed to make the LCD upright.',
+ input_schema: {
+ type: 'object',
+ properties: {
+ observations: {
+ type: 'string',
+ description: 'In one sentence, name 1-2 specific orientation cues you can see (e.g., "SYS label is on the right side of the LCD" or "Brand name reads top-to-bottom"). Then state which direction is UP in the current image.'
+ },
+ rotation_cw_degrees: {
+ type: 'integer',
+ enum: [0, 90, 180, 270],
+ description: 'Cardinal CW rotation in degrees needed to make the LCD upright. Choose exactly one of: 0, 90, 180, 270.'
+ }
+ },
+ required: ['observations', 'rotation_cw_degrees']
+ }
+ }],
+ tool_choice: { type: 'tool', name: 'set_rotation' },
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: cardinalPreview.type, data: cardinalPreview.b64 } },
- { type: 'text', text: 'How many degrees of CW rotation are needed to make the digits readable normally? Reply with ONLY {"add":N} where N is 0, 90, 180, or 270.' }
+ { type: 'text', text: 'What cardinal rotation is needed to make this BP monitor LCD appear upright? Use the orientation cues to identify which side is naturally UP.' }
  ]
  }]
  })
  });
  if (cardinalResp.ok) {
  const respData = await cardinalResp.json();
- const respText = respData.content?.find(b => b.type === 'text')?.text || '';
- console.log('Pulse: cardinal raw response:', respText);
- const cm = respText.match(/\{[\s\S]*?\}/);
- if (cm) {
- const cardinal = JSON.parse(cm[0]);
- if ([0, 90, 180, 270].includes(cardinal.add) && cardinal.add !== 0) {
+ const toolUseBlock = respData.content?.find(b => b.type === 'tool_use' && b.name === 'set_rotation');
+ if (toolUseBlock && toolUseBlock.input) {
+ const { observations, rotation_cw_degrees } = toolUseBlock.input;
+ console.log('Pulse: cardinal observations:', observations);
+ console.log('Pulse: cardinal rotation_cw_degrees:', rotation_cw_degrees);
+ if ([0, 90, 180, 270].includes(rotation_cw_degrees) && rotation_cw_degrees !== 0) {
  const before = rotation;
- rotation += cardinal.add;
- console.log('Pulse: cardinal correction +' + cardinal.add + '°, total rotation=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
+ rotation += rotation_cw_degrees;
+ console.log('Pulse: cardinal correction +' + rotation_cw_degrees + '°, total rotation=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
  } else {
  console.log('Pulse: cardinal check says no additional rotation needed');
  }
+ } else {
+ console.log('Pulse: cardinal check returned no tool_use block, raw response:', JSON.stringify(respData.content));
  }
+ } else {
+ console.log('Pulse: cardinal check API failed:', cardinalResp.status);
  }
  } catch(e) { console.log('Pulse: cardinal check failed, keeping edge-detection rotation:', e.message); }
 
