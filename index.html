@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.14 — 2026-06-14 | Hide image until AI-processed deskewed crop is ready; large spinner in thumb area during processing -->
+<!-- Pulse v6.16 — 2026-06-14 | Canvas sized to actual LCD dims (post-deskew) × 1.5 — uniform 25% padding matching LCD's natural shape; black fills any area outside source -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1337,6 +1337,10 @@ async function handleFiles(files) {
  rotation = detectRotationFromEdges(edgeCanvas);
  } catch(e) { console.log('Pulse: edge detection failed, rotation=0:', e.message); rotation = 0; }
 
+ // Save the deskew rotation BEFORE the cardinal check adds 0/90/180/270.
+ // We need this later to recover the LCD's actual axis-aligned dimensions.
+ const deskewRotation = rotation;
+
  // Compute LCD center and base output dimensions (LCD + 25% padding each side)
  const lcdCenterX = (box.x + box.w/2) / 100 * natW;
  const lcdCenterY = (box.y + box.h/2) / 100 * natH;
@@ -1422,12 +1426,41 @@ async function handleFiles(files) {
  }
  } catch(e) { console.log('Pulse: cardinal check failed, keeping edge-detection rotation:', e.message); }
 
+ // Compute actual LCD dimensions (post-deskew, axis-aligned). The Sonnet bbox
+ // captures the TILTED LCD which appears larger than the actual rectangle.
+ // Recovering actual dims lets us size the output canvas to match the LCD's
+ // natural shape with uniform 25% padding on all sides.
+ let actualLCDW = lcdW_px;
+ let actualLCDH = lcdH_px;
+ const absD = Math.abs(deskewRotation);
+ if (absD >= 1 && absD < 44) {
+ const cosD = Math.cos(absD * Math.PI / 180);
+ const sinD = Math.sin(absD * Math.PI / 180);
+ const cos2D = cosD * cosD - sinD * sinD;
+ if (cos2D > 0.05) {
+ const aw = (lcdW_px * cosD - lcdH_px * sinD) / cos2D;
+ const ah = (lcdH_px * cosD - lcdW_px * sinD) / cos2D;
+ // Sanity-check: results must be smaller than bbox (geometric necessity)
+ // and not absurdly skewed. If math is unreliable (often when edge detection
+ // over-estimated the rotation), fall back to bbox dims.
+ if (aw > 0 && ah > 0 && aw <= lcdW_px && ah <= lcdH_px &&
+ aw >= lcdW_px * 0.3 && ah >= lcdH_px * 0.3) {
+ actualLCDW = aw;
+ actualLCDH = ah;
+ console.log('Pulse: actual LCD dims (post-deskew): ' + Math.round(aw) + 'x' + Math.round(ah) + ' (vs source bbox ' + Math.round(lcdW_px) + 'x' + Math.round(lcdH_px) + ')');
+ } else {
+ console.log('Pulse: actual LCD calc gave unreliable result (rotation likely over-estimated); using bbox dims');
+ }
+ }
+ }
+
  // Determine output dimensions based on whether final rotation swaps width/height
  const totalRotMod = ((rotation % 360) + 360) % 360;
  const swap = (totalRotMod >= 45 && totalRotMod < 135) || (totalRotMod >= 225 && totalRotMod < 315);
- const outSrcW = (swap ? lcdH_px : lcdW_px) * 1.5;
- const outSrcH = (swap ? lcdW_px : lcdH_px) * 1.5;
+ const outSrcW = (swap ? actualLCDH : actualLCDW) * 1.5;
+ const outSrcH = (swap ? actualLCDW : actualLCDH) * 1.5;
  if (swap) console.log('Pulse: dimensions swapped for cardinal rotation (device was sideways)');
+ console.log('Pulse: output canvas (LCD * 1.5 with 25% padding): ' + Math.round(outSrcW) + 'x' + Math.round(outSrcH));
 
  // Regenerate thumbnail using deskewed render (tight LCD-shaped crop, no empty corners)
  try {
