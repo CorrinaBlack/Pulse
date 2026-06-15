@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.11 — 2026-06-12 | Cardinal orientation check (90/180/270°) via Sonnet after edge detection, with dimension swap for sideways devices -->
+<!-- Pulse v6.12 — 2026-06-14 | Cardinal orientation check now uses Opus 4.7 (Sonnet returned prose); stricter JSON-only prompt -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1355,15 +1355,14 @@ async function handleFiles(files) {
  'anthropic-dangerous-direct-browser-access': 'true'
  },
  body: JSON.stringify({
- model: 'claude-sonnet-4-20250514',
+ model: 'claude-opus-4-7',
  max_tokens: 40,
- temperature: 0,
- system: 'You see an LCD/digital display from a blood pressure monitor. The image may need to be rotated so the text reads normally (left-to-right, top-to-bottom). Choose the additional clockwise rotation needed: 0 (already correct), 90, 180, or 270. Return ONLY a JSON object: {"add":NUMBER}. No other text.',
+ system: 'You see a blood pressure monitor LCD that may be rotated. Determine how many degrees of CLOCKWISE rotation are needed so the digits/text read normally (left-to-right, top-to-bottom). Valid answers: 0 (already upright), 90 (currently rotated 90° CCW from upright, needs 90° CW), 180 (currently upside down), 270 (currently rotated 90° CW from upright, needs 270° CW). Output ONLY a JSON object in this exact format: {"add":NUMBER}. No prose, no explanation, no analysis. Just the JSON.',
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: cardinalPreview.type, data: cardinalPreview.b64 } },
- { type: 'text', text: 'How many degrees of additional clockwise rotation does this LCD image need to make the text read normally (left-to-right, top-to-bottom)? Choose only: 0, 90, 180, or 270.' }
+ { type: 'text', text: 'How many degrees of CW rotation are needed to make the digits readable normally? Reply with ONLY {"add":N} where N is 0, 90, 180, or 270.' }
  ]
  }]
  })
