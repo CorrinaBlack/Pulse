@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.22 — 2026-06-15 | Notes cell shrunk to icon-only (☰) styled same as edit/delete; 'Stage' dropped from category labels (High 1, High 2) — propagated to badge / chart popup / FDA popover / CSV export; data list default holds 25 rows then scrolls; scrollbars now have transparent tracks (thumb-only) -->
+<!-- Pulse v6.23 — 2026-06-15 | Data list default sized to 6 rows (~240px) then scrolls -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -631,9 +631,9 @@
 
  .data-table { width: 100%; border-collapse: collapse; }
  .data-table-wrap {
- /* Holds roughly 25 rows (each ~34px) plus the ~32px sticky header.
- Above 25 rows, the wrap scrolls vertically; horizontal overflow scrolls too. */
- max-height: 880px;
+ /* Holds roughly 6 rows (each ~34px) plus the ~32px sticky header.
+ Above 6 rows, the wrap scrolls vertically; horizontal overflow scrolls too. */
+ max-height: 240px;
  overflow-y: auto;
  overflow-x: auto;
  border: 1px solid var(--border);
