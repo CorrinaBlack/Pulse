@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.13 — 2026-06-14 | Cardinal check uses tool_use with required reasoning field + richer prompt with orientation cues (SYS at top, PUL at bottom, etc.) -->
+<!-- Pulse v6.14 — 2026-06-14 | Hide image until AI-processed deskewed crop is ready; large spinner in thumb area during processing -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -327,7 +327,7 @@
  display: flex;
  align-items: center;
  justify-content: center;
- min-height: 90px;
+ min-height: 120px;
  }
  .ocr-thumb-wrap img {
  width: 100%;
@@ -342,6 +342,17 @@
  font-family: 'DM Mono', monospace;
  padding: 14px;
  text-align: center;
+ display: flex;
+ flex-direction: column;
+ align-items: center;
+ gap: 10px;
+ }
+ .ocr-thumb-wrap .thumb-placeholder .spinner-lg {
+ width: 28px; height: 28px;
+ border: 3px solid var(--border);
+ border-top-color: var(--accent);
+ border-radius: 50%;
+ animation: spin 0.8s linear infinite;
  }
  @media (max-width: 700px) {
  .ocr-item { grid-template-columns: 1fr; }
@@ -1108,9 +1119,7 @@ async function handleFiles(files) {
 
  for (const file of toProcess) {
  const qid = genId();
- const item = { qid, file, status: 'processing', sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
- // Show image preview immediately via blob URL (will be revoked when item leaves queue)
- try { item.thumb = URL.createObjectURL(file); } catch(e) { /* ignore */ }
+ const item = { qid, file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
  ocrQueue.push(item);
  renderOCRQueue();
 
@@ -1129,7 +1138,7 @@ async function handleFiles(files) {
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
  // Create small thumbnail for queue display (~240px max dimension, JPEG 0.75)
- // For HEIC the initial blob URL may not have rendered; this canvas version always works
+ // Stored as a FALLBACK in case deskew fails. Not displayed yet (thumbReady stays false).
  const thumbCanvas = document.createElement('canvas');
  const thumbScale = Math.min(1, 240 / Math.max(natW, natH));
  thumbCanvas.width = Math.round(natW * thumbScale);
@@ -1137,12 +1146,9 @@ async function handleFiles(files) {
  const tctx = thumbCanvas.getContext('2d');
  tctx.imageSmoothingQuality = 'high';
  tctx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
- // Revoke previous blob URL (if any) before replacing with canvas data URL
- if (item.thumb && item.thumb.startsWith('blob:')) {
- try { URL.revokeObjectURL(item.thumb); } catch(e) {}
- }
  item.thumb = thumbCanvas.toDataURL('image/jpeg', 0.75);
- renderOCRQueue();
+ // Note: NOT calling renderOCRQueue() here — we want the spinner to keep showing
+ // until the deskewed crop is ready.
 
  const MAX_BASE64 = 5242880 - 50000;
  const OPUS_MAX_DIM = 2576;
@@ -1430,6 +1436,7 @@ async function handleFiles(files) {
  try { URL.revokeObjectURL(item.thumb); } catch(e) {}
  }
  item.thumb = cropped.dataUrl;
+ item.thumbReady = true;
  renderOCRQueue();
  } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
  // Store deskewed render params for Pass 2 to reuse
@@ -1477,8 +1484,10 @@ async function handleFiles(files) {
  item.bpm = parsed.bpm != null ? String(parsed.bpm) : '';
  item.device = parsed.device || '';
  item.status = 'ready';
+ item.thumbReady = true; // ensure thumb is shown (deskewed crop or canvas fallback)
  } catch(e) {
  item.status = 'error';
+ item.thumbReady = true; // show whatever thumb we have so user can see what failed
  console.error('Pulse error:', e);
  if (e.message === 'Failed to fetch' || (e.name === 'TypeError' && !e.message.includes('API'))) {
  const isFile = window.location.protocol === 'file:';
@@ -1602,9 +1611,12 @@ function renderOCRQueue() {
  return `
  <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
  <div class="ocr-thumb-wrap">
- ${item.thumb
+ ${item.thumbReady && item.thumb
  ? `<img src="${item.thumb}" alt="${item.file?.name || 'image'}" />`
- : `<div class="thumb-placeholder">${item.status === 'processing' ? 'Loading…' : 'No preview'}</div>`}
+ : `<div class="thumb-placeholder">
+ <div class="spinner-lg"></div>
+ <span>${item.status === 'error' ? 'No preview' : 'Processing…'}</span>
+ </div>`}
  </div>
  <div class="ocr-body">
  ${item.status === 'ready' ? `
@@ -1629,8 +1641,7 @@ function renderOCRQueue() {
  ` : `
  <div class="ocr-header-row">
  <div class="ocr-filename">
- ${item.status === 'processing' ? '<div class="spinner"></div>' : '📋'}
- <span>${item.file?.name || 'Image'}</span>
+ 📋 <span>${item.file?.name || 'Image'}</span>
  </div>
  </div>
  ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
