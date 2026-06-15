@@ -1,4 +1,5 @@
-<!-- Pulse v6.17 — 2026-06-15 | Bbox detection moved from Sonnet to Opus 4.7 with tool_use schema + LCD-glass-specific prompt (Sonnet was significantly misplacing bboxes on tilted devices) -->
+
+<!-- Pulse v6.18 — 2026-06-15 | Adaptive padding: 25% when actual LCD dims computed, 10% when falling back to bbox (avoids loose crops on high-tilt devices like _4) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1445,8 +1446,12 @@ async function handleFiles(files) {
  // natural shape with uniform 25% padding on all sides.
  let actualLCDW = lcdW_px;
  let actualLCDH = lcdH_px;
+ let usedBboxFallback = true; // becomes false if formula succeeds
  const absD = Math.abs(deskewRotation);
- if (absD >= 1 && absD < 44) {
+ if (absD < 1) {
+ // Negligible rotation: bbox equals LCD by definition. Treat as "succeeded".
+ usedBboxFallback = false;
+ } else if (absD < 44) {
  const cosD = Math.cos(absD * Math.PI / 180);
  const sinD = Math.sin(absD * Math.PI / 180);
  const cos2D = cosD * cosD - sinD * sinD;
@@ -1460,20 +1465,27 @@ async function handleFiles(files) {
  aw >= lcdW_px * 0.3 && ah >= lcdH_px * 0.3) {
  actualLCDW = aw;
  actualLCDH = ah;
+ usedBboxFallback = false;
  console.log('Pulse: actual LCD dims (post-deskew): ' + Math.round(aw) + 'x' + Math.round(ah) + ' (vs source bbox ' + Math.round(lcdW_px) + 'x' + Math.round(lcdH_px) + ')');
  } else {
- console.log('Pulse: actual LCD calc gave unreliable result (rotation likely over-estimated); using bbox dims');
+ console.log('Pulse: actual LCD calc gave unreliable result (rotation likely over-estimated); using bbox dims with reduced padding');
  }
  }
  }
 
+ // Padding multiplier: 1.5× (25% each side) when we know the actual LCD shape;
+ // 1.2× (10% each side) when we fell back to bbox dims, because a tilted-LCD
+ // bbox is already much bigger than the LCD itself — adding another 25%
+ // creates a visibly loose crop.
+ const padMul = usedBboxFallback ? 1.2 : 1.5;
+
  // Determine output dimensions based on whether final rotation swaps width/height
  const totalRotMod = ((rotation % 360) + 360) % 360;
  const swap = (totalRotMod >= 45 && totalRotMod < 135) || (totalRotMod >= 225 && totalRotMod < 315);
- const outSrcW = (swap ? actualLCDH : actualLCDW) * 1.5;
- const outSrcH = (swap ? actualLCDW : actualLCDH) * 1.5;
+ const outSrcW = (swap ? actualLCDH : actualLCDW) * padMul;
+ const outSrcH = (swap ? actualLCDW : actualLCDH) * padMul;
  if (swap) console.log('Pulse: dimensions swapped for cardinal rotation (device was sideways)');
- console.log('Pulse: output canvas (LCD * 1.5 with 25% padding): ' + Math.round(outSrcW) + 'x' + Math.round(outSrcH));
+ console.log('Pulse: output canvas (LCD * ' + padMul + ' with ' + Math.round((padMul-1)*50) + '% padding each side): ' + Math.round(outSrcW) + 'x' + Math.round(outSrcH));
 
  // Regenerate thumbnail using deskewed render (tight LCD-shaped crop, no empty corners)
  try {
