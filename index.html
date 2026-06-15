@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.18 — 2026-06-15 | Adaptive padding: 25% when actual LCD dims computed, 10% when falling back to bbox (avoids loose crops on high-tilt devices like _4) -->
+<!-- Pulse v6.19 — 2026-06-15 | FDA BP Categories moved to a popover off the hamburger menu (removed from main page); added CSV Import (strict M/D/YYYY h:MM AM/PM format, dedupes on dt, existing records win) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -139,6 +139,32 @@
  height: 1px;
  background: var(--border);
  margin: 4px 0;
+ }
+
+ /* HAMBURGER POPOVER (for BP Categories etc.) */
+ .menu-popover {
+ position: absolute;
+ top: calc(100% + 6px);
+ right: 0;
+ width: min(360px, calc(100vw - 32px));
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+ padding: 14px;
+ display: none;
+ z-index: 100;
+ max-height: calc(100vh - 80px);
+ overflow-y: auto;
+ }
+ .menu-popover.open { display: block; }
+ .menu-popover-title {
+ font-family: 'DM Mono', monospace;
+ font-size: 11px;
+ color: var(--text3);
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ margin-bottom: 10px;
  }
 
  main { padding: 0 16px; max-width: 900px; margin: 0 auto; }
@@ -682,37 +708,16 @@
  </button>
  <div class="hamburger-menu" id="hamburgerMenu">
  <button class="menu-item" onclick="toggleApiPanel();closeMenu()">⚙ API Key</button>
+ <div class="menu-divider"></div>
+ <button class="menu-item" onclick="openCategoriesPopover();closeMenu()">📊 BP Categories</button>
+ <div class="menu-divider"></div>
  <button class="menu-item" onclick="exportCSV();closeMenu()">↓ Export CSV</button>
+ <button class="menu-item" onclick="triggerImportCSV();closeMenu()">↑ Import CSV</button>
  </div>
- </div>
-</header>
-
-<!-- API KEY PANEL -->
-<div id="apiPanel" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;">
- <div style="max-width:900px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
- <div style="flex:1;min-width:220px">
- <label style="font-size:10px;font-family:'DM Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Anthropic API Key</label>
- <input type="password" id="apiKeyInput" placeholder="sk-ant-…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:8px 12px;outline:none;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
- </div>
- <div style="display:flex;gap:8px;align-items:flex-end;padding-top:18px">
- <button class="submit-btn" style="margin-top:0;padding:9px 18px;font-size:13px" onclick="saveApiKey()">Save Key</button>
- <button class="export-btn" onclick="clearApiKey()">Clear</button>
- </div>
- <div style="font-size:12px;color:var(--text3);flex-basis:100%">🔒 Stored only in your browser's localStorage — never sent anywhere except directly to api.anthropic.com</div>
- </div>
-</div>
-
-
-<main>
- <!-- FDA CATEGORIES -->
- <div class="accordion" id="acc-fda">
- <div class="accordion-header" onclick="toggleAccordion('acc-fda')">
- <div class="accordion-title">FDA BP Categories</div>
- <div class="chevron">▼</div>
- </div>
- <div class="accordion-body">
- <div class="accordion-inner">
- <div class="cat-grid">
+ <!-- BP CATEGORIES POPOVER -->
+ <div class="menu-popover" id="categoriesPopover" role="dialog" aria-label="FDA BP Categories">
+ <div class="menu-popover-title">FDA BP Categories</div>
+ <div class="cat-grid" style="grid-template-columns:1fr;gap:8px">
  <div class="cat-card cat-low">
  <div class="cat-name" style="color:#6ab8d4">Hypotension</div>
  <div class="cat-range">Below 90/60 mmHg</div>
@@ -739,9 +744,27 @@
  </div>
  </div>
  </div>
+ <input type="file" id="csvImportInput" accept=".csv,text/csv" style="display:none" onchange="handleCSVImport(event)" />
  </div>
- </div>
+</header>
 
+<!-- API KEY PANEL -->
+<div id="apiPanel" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;">
+ <div style="max-width:900px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+ <div style="flex:1;min-width:220px">
+ <label style="font-size:10px;font-family:'DM Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Anthropic API Key</label>
+ <input type="password" id="apiKeyInput" placeholder="sk-ant-…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:8px 12px;outline:none;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+ </div>
+ <div style="display:flex;gap:8px;align-items:flex-end;padding-top:18px">
+ <button class="submit-btn" style="margin-top:0;padding:9px 18px;font-size:13px" onclick="saveApiKey()">Save Key</button>
+ <button class="export-btn" onclick="clearApiKey()">Clear</button>
+ </div>
+ <div style="font-size:12px;color:var(--text3);flex-basis:100%">🔒 Stored only in your browser's localStorage — never sent anywhere except directly to api.anthropic.com</div>
+ </div>
+</div>
+
+
+<main>
  <!-- DATA ENTRY -->
  <div class="accordion" id="acc-entry">
  <div class="accordion-header" onclick="toggleAccordion('acc-entry')">
@@ -1001,10 +1024,21 @@ function closeMenu() {
  document.getElementById('hamburgerMenu').classList.remove('open');
 }
 
-// Close hamburger when clicking outside
+function openCategoriesPopover() {
+ document.getElementById('categoriesPopover').classList.add('open');
+}
+
+function closeCategoriesPopover() {
+ document.getElementById('categoriesPopover').classList.remove('open');
+}
+
+// Close hamburger / popover when clicking outside the hamburger area
 document.addEventListener('click', (e) => {
  const wrap = document.querySelector('.hamburger-wrap');
- if (wrap && !wrap.contains(e.target)) closeMenu();
+ if (wrap && !wrap.contains(e.target)) {
+ closeMenu();
+ closeCategoriesPopover();
+ }
 });
 
 function toggleAccordion(id) {
@@ -2119,6 +2153,134 @@ function exportCSV() {
  const a = document.createElement('a');
  a.href = url; a.download = 'pulse-bp-data.csv'; a.click();
  URL.revokeObjectURL(url);
+}
+
+// ─── IMPORT CSV ───────────────────────────────────────────────────────────────
+// Strict format: matches our own export.
+// Columns: Date(M/D/YYYY), Time(h:MM AM/PM), Systolic, Diastolic, BPM, Device, Category, Notes
+// Dedupe key: dt (date+time down to the minute). Existing records win — imported dupes are skipped.
+function triggerImportCSV() {
+ document.getElementById('csvImportInput').click();
+}
+
+function handleCSVImport(e) {
+ const file = e.target.files[0];
+ if (!file) return;
+ const reader = new FileReader();
+ reader.onload = (ev) => {
+ try {
+ const result = importCSVText(ev.target.result);
+ alert('Import complete: ' + result.added + ' new record' + (result.added===1?'':'s') +
+ ', ' + result.skipped + ' duplicate' + (result.skipped===1?'':'s') + ' skipped' +
+ (result.errors > 0 ? ', ' + result.errors + ' row' + (result.errors===1?'':'s') + ' rejected (bad format)' : '') + '.');
+ } catch(err) {
+ alert('Import failed: ' + err.message);
+ }
+ // Reset so selecting the same file again re-fires onchange
+ e.target.value = '';
+ };
+ reader.onerror = () => alert('Could not read file.');
+ reader.readAsText(file);
+}
+
+function importCSVText(text) {
+ const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+ if (lines.length === 0) throw new Error('File is empty.');
+
+ const header = parseCSVLine(lines[0]).map(s => s.trim().toLowerCase());
+ const idx = {
+ date: header.indexOf('date'),
+ time: header.indexOf('time'),
+ sys: header.indexOf('systolic'),
+ dia: header.indexOf('diastolic'),
+ bpm: header.indexOf('bpm'),
+ device: header.indexOf('device'),
+ notes: header.indexOf('notes')
+ };
+ if (idx.date < 0 || idx.time < 0 || idx.sys < 0 || idx.dia < 0) {
+ throw new Error('Header missing required columns (Date, Time, Systolic, Diastolic).');
+ }
+
+ const existingDts = new Set(records.map(r => r.dt));
+ let added = 0, skipped = 0, errors = 0;
+ const newRecords = [];
+
+ for (let i = 1; i < lines.length; i++) {
+ const fields = parseCSVLine(lines[i]);
+ const dateStr = (fields[idx.date] || '').trim();
+ const timeStr = (fields[idx.time] || '').trim();
+ const sysStr = (fields[idx.sys] || '').trim();
+ const diaStr = (fields[idx.dia] || '').trim();
+
+ const isoDate = parseStrictDate(dateStr);
+ const isoTime = parseStrictTime(timeStr);
+ const sys = parseInt(sysStr, 10);
+ const dia = parseInt(diaStr, 10);
+ if (!isoDate || !isoTime || isNaN(sys) || isNaN(dia)) { errors++; continue; }
+
+ const dt = isoDate + 'T' + isoTime;
+ if (existingDts.has(dt)) { skipped++; continue; }
+
+ const bpmStr = idx.bpm >= 0 ? (fields[idx.bpm] || '').trim() : '';
+ const bpm = bpmStr ? parseInt(bpmStr, 10) : null;
+ const device = idx.device >= 0 ? (fields[idx.device] || '').trim() : '';
+ const notes = idx.notes >= 0 ? (fields[idx.notes] || '').trim() : '';
+
+ newRecords.push({ id: genId(), sys, dia, bpm: isNaN(bpm) ? null : bpm, device, dt, notes });
+ existingDts.add(dt);
+ added++;
+ }
+
+ if (added > 0) {
+ records.push(...newRecords);
+ records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
+ saveData(records);
+ renderData();
+ }
+ return { added, skipped, errors };
+}
+
+// Parse "M/D/YYYY" → "YYYY-MM-DD". Returns null on bad format.
+function parseStrictDate(s) {
+ const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+ if (!m) return null;
+ const mo = parseInt(m[1], 10), day = parseInt(m[2], 10), yr = parseInt(m[3], 10);
+ if (mo < 1 || mo > 12 || day < 1 || day > 31) return null;
+ return yr + '-' + String(mo).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+}
+
+// Parse "h:MM AM/PM" → "HH:MM" (24-hour). Returns null on bad format.
+function parseStrictTime(s) {
+ const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+ if (!m) return null;
+ let hr = parseInt(m[1], 10);
+ const min = parseInt(m[2], 10);
+ const ampm = m[3].toUpperCase();
+ if (hr < 1 || hr > 12 || min < 0 || min > 59) return null;
+ if (ampm === 'AM') hr = (hr === 12) ? 0 : hr;
+ else hr = (hr === 12) ? 12 : hr + 12;
+ return String(hr).padStart(2,'0') + ':' + String(min).padStart(2,'0');
+}
+
+// Simple RFC-4180-ish CSV line parser: handles quoted fields and "" escapes.
+function parseCSVLine(line) {
+ const out = [];
+ let cur = '', inQuote = false;
+ for (let i = 0; i < line.length; i++) {
+ const c = line[i];
+ if (inQuote) {
+ if (c === '"') {
+ if (line[i+1] === '"') { cur += '"'; i++; }
+ else { inQuote = false; }
+ } else cur += c;
+ } else {
+ if (c === ',') { out.push(cur); cur = ''; }
+ else if (c === '"' && cur === '') inQuote = true;
+ else cur += c;
+ }
+ }
+ out.push(cur);
+ return out;
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
