@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.21 — 2026-06-15 | Chart tooltip back to click (mobile-friendly); 2-digit year in data list & chart tooltip; edit/delete are icon buttons (✎ ✕); notes get a 💬 popup icon when clipped (tap to see full note in same popup style as chart); data list scrolls inside a ~50-row container with sticky header -->
+<!-- Pulse v6.22 — 2026-06-15 | Notes cell shrunk to icon-only (☰) styled same as edit/delete; 'Stage' dropped from category labels (High 1, High 2) — propagated to badge / chart popup / FDA popover / CSV export; data list default holds 25 rows then scrolls; scrollbars now have transparent tracks (thumb-only) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -33,6 +33,20 @@
  }
 
  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+ /* Scrollbars: track is transparent so scroll regions blend into the UI;
+ only the thumb is visible (a muted bar that matches our border color). */
+ * { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+ *::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+ *::-webkit-scrollbar-track { background: transparent; border: none; }
+ *::-webkit-scrollbar-thumb {
+ background: var(--border);
+ border-radius: 5px;
+ border: 2px solid transparent;
+ background-clip: padding-box;
+ }
+ *::-webkit-scrollbar-thumb:hover { background: var(--text3); background-clip: padding-box; }
+ *::-webkit-scrollbar-corner { background: transparent; }
 
  body {
  background: var(--bg);
@@ -617,9 +631,9 @@
 
  .data-table { width: 100%; border-collapse: collapse; }
  .data-table-wrap {
- /* Holds roughly 50 rows (each ~34px) plus the ~32px sticky header.
- Above 50 rows, the wrap scrolls vertically; horizontal overflow scrolls too. */
- max-height: 1740px;
+ /* Holds roughly 25 rows (each ~34px) plus the ~32px sticky header.
+ Above 25 rows, the wrap scrolls vertically; horizontal overflow scrolls too. */
+ max-height: 880px;
  overflow-y: auto;
  overflow-x: auto;
  border: 1px solid var(--border);
@@ -656,33 +670,23 @@
  color: var(--accent);
  }
  .sort-arrow.inactive { color: var(--text3); opacity: 0.4; }
- .data-table .cell-device,
- .data-table .cell-notes {
+ .data-table .cell-device {
  color: var(--text2);
  max-width: 160px;
  overflow: hidden;
  text-overflow: ellipsis;
  white-space: nowrap;
  }
- .data-table .cell-notes .notes-text {
- display: inline-block;
- vertical-align: middle;
- max-width: calc(100% - 26px);
- overflow: hidden;
- text-overflow: ellipsis;
- white-space: nowrap;
+ .data-table .cell-notes {
+ width: 44px;
+ text-align: center;
+ padding-left: 4px;
+ padding-right: 4px;
  }
- .notes-icon {
- background: transparent;
- border: none;
- color: var(--accent);
- cursor: pointer;
- padding: 0 6px 0 0;
- font-size: 14px;
- line-height: 1;
- vertical-align: middle;
+ .data-table .cell-notes::before {
+ /* Reserve a tiny zero-width spacer so the column doesn't fully collapse when no notes exist */
+ content: '';
  }
- .notes-icon:hover { color: var(--text); }
  .data-table td {
  padding: 9px 8px;
  border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -718,6 +722,8 @@
  }
  .act-edit { color: var(--text2); }
  .act-edit:hover { border-color: var(--accent); color: var(--accent); }
+ .act-notes { color: var(--text2); font-size: 16px; }
+ .act-notes:hover { border-color: var(--accent); color: var(--accent); }
  .act-delete { color: var(--text3); }
  .act-delete:hover { border-color: var(--red); color: var(--red); }
 
@@ -803,11 +809,11 @@
  <div class="cat-range">120–129 / below 80 mmHg</div>
  </div>
  <div class="cat-card cat-high1">
- <div class="cat-name" style="color:var(--orange)">High Stage 1</div>
+ <div class="cat-name" style="color:var(--orange)">High 1</div>
  <div class="cat-range">130–139 / 80–89 mmHg</div>
  </div>
  <div class="cat-card cat-high2">
- <div class="cat-name" style="color:var(--red)">High Stage 2</div>
+ <div class="cat-name" style="color:var(--red)">High 2</div>
  <div class="cat-range">140+ / 90+ mmHg</div>
  </div>
  <div class="cat-card cat-crisis">
@@ -1001,8 +1007,8 @@ function fmtDT(iso) {
 
 function bpCategory(sys, dia) {
  if (sys >= 180 || dia >= 120) return { label:'Crisis', color:'var(--purple)' };
- if (sys >= 140 || dia >= 90) return { label:'High Stage 2', color:'var(--red)' };
- if (sys >= 130 || dia >= 80) return { label:'High Stage 1', color:'var(--orange)' };
+ if (sys >= 140 || dia >= 90) return { label:'High 2', color:'var(--red)' };
+ if (sys >= 130 || dia >= 80) return { label:'High 1', color:'var(--orange)' };
  if (sys >= 120 && dia < 80) return { label:'Elevated', color:'var(--yellow)' };
  if (sys < 90 || dia < 60) return { label:'Hypotension', color:'#6ab8d4' };
  return { label:'Normal', color:'var(--green)' };
@@ -2061,7 +2067,7 @@ function sortArrow(column) {
 function renderTable(filtered) {
  const col = currentSort.column;
  const dir = currentSort.direction;
- const catOrder = ['Hypotension','Normal','Elevated','High Stage 1','High Stage 2','Crisis'];
+ const catOrder = ['Hypotension','Normal','Elevated','High 1','High 2','Crisis'];
 
  const sorted = [...filtered].sort((a, b) => {
  const nullishA = (col === 'bpm' && a.bpm == null) ||
@@ -2097,14 +2103,16 @@ function renderTable(filtered) {
  const cat = bpCategory(r.sys, r.dia);
  const dtStr = dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'}) +
  ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
- const notesHtml = r.notes ? escapeHtml(r.notes) : '—';
+ const notesCell = r.notes
+ ? `<button class="act-btn act-notes" onclick="showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
+ : '';
  return `<tr>
  <td class="mono">${dtStr}</td>
  <td class="mono">${r.sys}</td>
  <td class="mono">${r.dia}</td>
  <td class="mono">${r.bpm||'—'}</td>
  <td class="cell-device">${escapeHtml(r.device || '') || '—'}</td>
- <td class="cell-notes" data-record-id="${r.id}">${notesHtml}</td>
+ <td class="cell-notes">${notesCell}</td>
  <td><span class="bp-badge" style="background:${cat.color}22;color:${cat.color}">${cat.label}</span></td>
  <td><div class="td-actions">
  <button class="act-btn act-edit" onclick="openEdit('${r.id}')" title="Edit" aria-label="Edit">✎</button>
@@ -2112,20 +2120,6 @@ function renderTable(filtered) {
  </div></td>
  </tr>`;
  }).join('');
-
- // After paint, detect which notes cells are clipped and prepend a popup icon.
- // The cell uses `overflow: hidden; text-overflow: ellipsis; white-space: nowrap`,
- // so scrollWidth > clientWidth reliably indicates a clipped value.
- requestAnimationFrame(() => {
- document.querySelectorAll('#tableBody .cell-notes').forEach(cell => {
- const rid = cell.dataset.recordId;
- const rec = records.find(x => x.id === rid);
- if (!rec || !rec.notes) return;
- if (cell.scrollWidth > cell.clientWidth + 1) { // +1 to avoid sub-pixel false-positives
- cell.innerHTML = `<button class="notes-icon" onclick="showNotePopup(event,'${rid}')" title="Show full note" aria-label="Show full note">💬</button><span class="notes-text">${escapeHtml(rec.notes)}</span>`;
- }
- });
- });
 }
 
 function showNotePopup(event, recordId) {
