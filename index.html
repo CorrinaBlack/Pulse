@@ -1,5 +1,4 @@
-
-<!-- Pulse v6.16 — 2026-06-14 | Canvas sized to actual LCD dims (post-deskew) × 1.5 — uniform 25% padding matching LCD's natural shape; black fills any area outside source -->
+<!-- Pulse v6.17 — 2026-06-15 | Bbox detection moved from Sonnet to Opus 4.7 with tool_use schema + LCD-glass-specific prompt (Sonnet was significantly misplacing bboxes on tilted devices) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1276,12 +1275,12 @@ async function handleFiles(files) {
  return JSON.parse(m[0]);
  };
 
- // PASS 1: Cheap bbox detection with Sonnet (just bbox, rotation via edge detection)
+ // PASS 1: LCD bbox detection with Opus 4.7 via tool_use (rotation via edge detection)
  let crop = null;
  let rotation = 0;
  try {
  const preview = renderRegion(null, null, 1200);
- console.log('Pulse: Pass 1 — detecting LCD bbox with Sonnet');
+ console.log('Pulse: Pass 1 — detecting LCD bbox with Opus 4.7');
  const bboxResp = await fetch('https://api.anthropic.com/v1/messages', {
  method: 'POST',
  headers: {
@@ -1291,26 +1290,40 @@ async function handleFiles(files) {
  'anthropic-dangerous-direct-browser-access': 'true'
  },
  body: JSON.stringify({
- model: 'claude-sonnet-4-20250514',
- max_tokens: 120,
- temperature: 0,
- system: 'Return ONLY a JSON object with the axis-aligned bounding box of the LCD/digital display on this blood pressure monitor. Use percentage coordinates (0-100) where x,y is the top-left of the bounding box. Format: {"x":LEFT,"y":TOP,"w":WIDTH,"h":HEIGHT}. No other text.',
+ model: 'claude-opus-4-7',
+ max_tokens: 500,
+ tools: [{
+ name: 'report_lcd_bbox',
+ description: 'Report the axis-aligned bounding box of the LCD/digital display screen on the blood pressure monitor.',
+ input_schema: {
+ type: 'object',
+ properties: {
+ observations: { type: 'string', description: 'Briefly describe where you see the LCD glass area on the device — its approximate location, size, and any tilt/rotation. 1-2 sentences.' },
+ x: { type: 'number', description: 'Left edge of LCD bounding box, as percentage of image width (0-100).' },
+ y: { type: 'number', description: 'Top edge of LCD bounding box, as percentage of image height (0-100).' },
+ w: { type: 'number', description: 'Width of LCD bounding box, as percentage of image width (0-100).' },
+ h: { type: 'number', description: 'Height of LCD bounding box, as percentage of image height (0-100).' }
+ },
+ required: ['observations', 'x', 'y', 'w', 'h']
+ }
+ }],
+ tool_choice: { type: 'tool', name: 'report_lcd_bbox' },
  messages: [{
  role: 'user',
  content: [
  { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Where is the LCD display showing the blood pressure numbers? Return its bounding box as percentages.' }
+ { type: 'text', text: 'Identify the LCD screen on this blood pressure monitor — the rectangular display area where the digital readout (systolic/diastolic/pulse numbers) appears.\n\nIMPORTANT:\n- Capture ONLY the LCD glass area itself (dark/grey for most devices, or blue-backlit for iHealth-type devices). The LCD glass is the inset display panel.\n- EXCLUDE the white/silver plastic bezel and device casing around the LCD.\n- EXCLUDE side labels printed on the bezel (SYS, DIA, PUL/PULSE, mmHg, M/D, MEM, H/M).\n- EXCLUDE physical buttons (ON/OFF, MEM, SET, START/STOP, M1, M2).\n- If the device is tilted in the photo, return the smallest axis-aligned bounding box that fully contains the tilted LCD glass.\n- The bbox should be TIGHT — the LCD glass should fill almost the entire bounding box.' }
  ]
  }]
  })
  });
  if (bboxResp.ok) {
  const bboxData = await bboxResp.json();
- const bboxText = bboxData.content?.find(b => b.type === 'text')?.text || '';
- console.log('Pulse: Sonnet bbox raw response:', bboxText);
- const bm = bboxText.match(/\{[\s\S]*?\}/);
- if (bm) {
- const box = JSON.parse(bm[0]);
+ const toolUse = bboxData.content?.find(b => b.type === 'tool_use');
+ if (toolUse && toolUse.input) {
+ const box = toolUse.input;
+ console.log('Pulse: Opus bbox observations:', box.observations);
+ console.log('Pulse: Opus bbox raw:', JSON.stringify({x:box.x, y:box.y, w:box.w, h:box.h}));
  if (box.x != null && box.y != null && box.w != null && box.h != null) {
  // Apply 25% padding around bbox
  const padX = box.w * 0.25;
@@ -1426,7 +1439,7 @@ async function handleFiles(files) {
  }
  } catch(e) { console.log('Pulse: cardinal check failed, keeping edge-detection rotation:', e.message); }
 
- // Compute actual LCD dimensions (post-deskew, axis-aligned). The Sonnet bbox
+ // Compute actual LCD dimensions (post-deskew, axis-aligned). The Opus bbox
  // captures the TILTED LCD which appears larger than the actual rectangle.
  // Recovering actual dims lets us size the output canvas to match the LCD's
  // natural shape with uniform 25% padding on all sides.
@@ -1477,7 +1490,7 @@ async function handleFiles(files) {
  }
  }
  } else {
- console.log('Pulse: Sonnet bbox call failed:', bboxResp.status);
+ console.log('Pulse: Opus bbox call failed:', bboxResp.status);
  }
  } catch(e) { console.log('Pulse: bbox detection failed, will use full image:', e.message); }
 
