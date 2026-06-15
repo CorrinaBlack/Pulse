@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.19 — 2026-06-15 | FDA BP Categories moved to a popover off the hamburger menu (removed from main page); added CSV Import (strict M/D/YYYY h:MM AM/PM format, dedupes on dt, existing records win) -->
+<!-- Pulse v6.20 — 2026-06-15 | Editable device combo box (datalist from records, Title-Case normalized, brand caps preserved); colored avg stat cards matching chart lines; chart tooltip on hover (was click) with per-line breakdown; combined Date+Time column; all table columns sortable with arrow indicator; default sort Date+Time descending -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -584,6 +584,15 @@
  }
  .chart-tooltip-popup .tt-bp { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 2px; }
  .chart-tooltip-popup .tt-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text2); }
+ .chart-tooltip-popup .tt-row {
+ display: flex;
+ justify-content: space-between;
+ gap: 16px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ padding: 2px 0;
+ }
+ .chart-tooltip-popup .tt-row strong { color: var(--text); font-weight: 600; }
 
  /* DATA LIST */
  .list-controls {
@@ -616,7 +625,21 @@
  text-align: left;
  padding: 8px 8px;
  border-bottom: 1px solid var(--border);
+ white-space: nowrap;
  }
+ .data-table th.sortable {
+ cursor: pointer;
+ user-select: none;
+ transition: var(--transition);
+ }
+ .data-table th.sortable:hover { color: var(--accent); }
+ .sort-arrow {
+ display: inline-block;
+ margin-left: 4px;
+ font-size: 11px;
+ color: var(--accent);
+ }
+ .sort-arrow.inactive { color: var(--text3); opacity: 0.4; }
  .data-table td {
  padding: 9px 8px;
  border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -808,7 +831,7 @@
  </div>
  <div class="form-group">
  <label>Device</label>
- <input type="text" id="m-device" placeholder="e.g. Omron, iHealth…" />
+ <input type="text" id="m-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" />
  </div>
  <div class="form-group">
  <label>Date</label>
@@ -863,7 +886,7 @@
  </div>
  <div class="form-group">
  <label>Device</label>
- <input type="text" id="e-device" placeholder="e.g. Omron, iHealth…" />
+ <input type="text" id="e-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" />
  </div>
  <div class="form-group">
  <label>Date</label>
@@ -888,6 +911,9 @@
 <!-- CHART TOOLTIP -->
 <div class="chart-tooltip-popup" id="chartTooltip"></div>
 
+<!-- DEVICE NAME OPTIONS (populated dynamically from records) -->
+<datalist id="deviceOptions"></datalist>
+
 <script>
 // ─── DATA STORE ───────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pulse_bp_data';
@@ -905,7 +931,8 @@ let records = loadData();
 let editingId = null;
 let ocrQueue = [];
 let chartInstance = null;
-let currentSort = 'datetime';
+let lastTooltipIdx = null;
+let currentSort = { column: 'date', direction: 'desc' };
 let filterStart = null, filterEnd = null;
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
@@ -1717,7 +1744,7 @@ function renderOCRQueue() {
  <div class="ocr-field ocr-col-date"><label>Date</label><input type="date" class="dt-input" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
  <div class="ocr-field ocr-col-time"><label>Time</label><input type="time" class="dt-input" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
  <div class="ocr-row-meas">
- <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
+ <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" list="deviceOptions" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
  <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
  <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
  <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
@@ -1834,12 +1861,40 @@ function checkDuplicate(dt) {
  return records.some(r => r.dt === dt);
 }
 
+// Normalize a device name to Title Case while preserving brand-style internal caps
+// like "iHealth" / "eBay". Rule: if a word already contains a lowercase letter
+// immediately followed by an uppercase letter, leave it alone. Otherwise, capitalize
+// the first letter and lowercase the rest.
+function normalizeDeviceName(s) {
+ if (!s) return '';
+ return s.trim().split(/\s+/).map(w => {
+ if (/[a-z][A-Z]/.test(w)) return w; // preserves iHealth, eHealth, BPMonitor, etc.
+ return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+ }).join(' ');
+}
+
+// Rebuild the <datalist> of device suggestions from current records.
+// Dedupes case-insensitively, keeping the first-seen (already-normalized) spelling.
+function updateDeviceOptions() {
+ const seen = new Map(); // lower-cased -> display
+ records.forEach(r => {
+ const name = (r.device || '').trim();
+ if (!name) return;
+ const key = name.toLowerCase();
+ if (!seen.has(key)) seen.set(key, name);
+ });
+ const sorted = Array.from(seen.values()).sort((a,b) => a.localeCompare(b));
+ const dl = document.getElementById('deviceOptions');
+ if (dl) dl.innerHTML = sorted.map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
+}
+
 function saveRecord({ sys, dia, bpm, device, dt, notes }) {
  const existing = records.findIndex(r => r.dt === dt);
  if (existing >= 0) { records.splice(existing, 1); }
- records.push({ id: genId(), sys, dia, bpm, device: device || '', dt, notes: notes || '' });
+ records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
  records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
+ updateDeviceOptions();
 }
 
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
@@ -1865,15 +1920,15 @@ function renderData() {
  <div class="stats-row">
  <div class="stat-card">
  <div class="stat-label">Avg Systolic</div>
- <div class="stat-value">${avgSys}<span> mmHg</span></div>
+ <div class="stat-value" style="color:#e8624a">${avgSys}<span> mmHg</span></div>
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Diastolic</div>
- <div class="stat-value">${avgDia}<span> mmHg</span></div>
+ <div class="stat-value" style="color:#6ab8d4">${avgDia}<span> mmHg</span></div>
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Heart Rate</div>
- <div class="stat-value">${avgBpm}<span> bpm</span></div>
+ <div class="stat-value" style="color:#5db87a">${avgBpm}<span> bpm</span></div>
  </div>
  <div class="date-filter">
  <label>Filter range</label>
@@ -1895,24 +1950,17 @@ function renderData() {
 
  <div style="height:24px"></div>
 
- <div class="list-controls">
- <span>Sort by:</span>
- <button class="pivot-btn ${currentSort==='datetime'?'active':''}" onclick="setSort('datetime')">Date / Time</button>
- <button class="pivot-btn ${currentSort==='category'?'active':''}" onclick="setSort('category')">Category</button>
- </div>
-
  <div style="overflow-x:auto">
  <table class="data-table">
  <thead>
  <tr>
- <th>Date</th>
- <th>Time</th>
- <th>Systolic</th>
- <th>Diastolic</th>
- <th>BPM</th>
- <th>Device</th>
- <th>Notes</th>
- <th>Category</th>
+ <th class="sortable" onclick="setSort('date')">Date &amp; Time ${sortArrow('date')}</th>
+ <th class="sortable" onclick="setSort('sys')">Systolic ${sortArrow('sys')}</th>
+ <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
+ <th class="sortable" onclick="setSort('bpm')">BPM ${sortArrow('bpm')}</th>
+ <th class="sortable" onclick="setSort('device')">Device ${sortArrow('device')}</th>
+ <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}</th>
+ <th class="sortable" onclick="setSort('category')">Category ${sortArrow('category')}</th>
  <th></th>
  </tr>
  </thead>
@@ -1936,21 +1984,67 @@ function clearFilter() {
  renderData();
 }
 
-function setSort(s) { currentSort = s; renderData(); }
+function setSort(column) {
+ if (currentSort.column === column) {
+ // Toggle direction on same column
+ currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+ } else {
+ // New column: default descending (highest/latest at top — useful for BP data)
+ currentSort.column = column;
+ currentSort.direction = 'desc';
+ }
+ renderData();
+}
+
+function sortArrow(column) {
+ if (currentSort.column !== column) return '<span class="sort-arrow inactive">↕</span>';
+ return currentSort.direction === 'asc'
+ ? '<span class="sort-arrow">↑</span>'
+ : '<span class="sort-arrow">↓</span>';
+}
 
 function renderTable(filtered) {
- let sorted = [...filtered];
- if (currentSort === 'category') {
- const order = ['Crisis','High Stage 2','High Stage 1','Elevated','Normal','Hypotension'];
- sorted.sort((a,b) => order.indexOf(bpCategory(a.sys,a.dia).label) - order.indexOf(bpCategory(b.sys,b.dia).label));
+ const col = currentSort.column;
+ const dir = currentSort.direction;
+ const catOrder = ['Hypotension','Normal','Elevated','High Stage 1','High Stage 2','Crisis'];
+
+ const sorted = [...filtered].sort((a, b) => {
+ // Always sink empty/null values to the bottom regardless of direction
+ const nullishA = (col === 'bpm' && a.bpm == null) ||
+ ((col === 'device' || col === 'notes') && !a[col]);
+ const nullishB = (col === 'bpm' && b.bpm == null) ||
+ ((col === 'device' || col === 'notes') && !b[col]);
+ if (nullishA && nullishB) return 0;
+ if (nullishA) return 1;
+ if (nullishB) return -1;
+
+ let va, vb;
+ switch (col) {
+ case 'date': va = a.dt; vb = b.dt; break;
+ case 'sys': va = a.sys; vb = b.sys; break;
+ case 'dia': va = a.dia; vb = b.dia; break;
+ case 'bpm': va = a.bpm; vb = b.bpm; break;
+ case 'device': va = (a.device || '').toLowerCase(); vb = (b.device || '').toLowerCase(); break;
+ case 'notes': va = (a.notes || '').toLowerCase(); vb = (b.notes || '').toLowerCase(); break;
+ case 'category':
+ va = catOrder.indexOf(bpCategory(a.sys, a.dia).label);
+ vb = catOrder.indexOf(bpCategory(b.sys, b.dia).label);
+ break;
+ default: va = a.dt; vb = b.dt;
  }
+ if (va < vb) return dir === 'asc' ? -1 : 1;
+ if (va > vb) return dir === 'asc' ? 1 : -1;
+ return 0;
+ });
+
  const body = document.getElementById('tableBody');
  body.innerHTML = sorted.map(r => {
  const dt = new Date(r.dt);
  const cat = bpCategory(r.sys, r.dia);
+ const dtStr = dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}) +
+ ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
  return `<tr>
- <td class="mono">${dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'})}</td>
- <td class="mono">${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</td>
+ <td class="mono">${dtStr}</td>
  <td class="mono">${r.sys}</td>
  <td class="mono">${r.dia}</td>
  <td class="mono">${r.bpm||'—'}</td>
@@ -2049,30 +2143,48 @@ function renderChart(data) {
  min: 40
  }
  },
- onClick(evt) {
- const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
- if (pts.length) {
- const idx = pts[0].index;
+ onHover(evt, activeElements) {
+ const tooltip = document.getElementById('chartTooltip');
+ if (!tooltip) return;
+ if (activeElements && activeElements.length > 0) {
+ const idx = activeElements[0].index;
+ if (idx === lastTooltipIdx) return; // already showing this point
+ lastTooltipIdx = idx;
  const r = data[idx];
  const cat = bpCategory(r.sys, r.dia);
- const tooltip = document.getElementById('chartTooltip');
  const dt = new Date(r.dt);
  tooltip.innerHTML = `
  <div class="tt-bp" style="color:${cat.color}">${r.sys}/${r.dia}</div>
- <div class="tt-meta">${r.bpm ? r.bpm+' bpm · ' : ''}${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}<br>${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+ <div class="tt-row"><span style="color:#e8624a">Systolic</span> <strong>${r.sys}</strong></div>
+ <div class="tt-row"><span style="color:#6ab8d4">Diastolic</span> <strong>${r.dia}</strong></div>
+ ${r.bpm ? `<div class="tt-row"><span style="color:#5db87a">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
+ <div class="tt-meta" style="margin-top:6px">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
  ${r.notes ? `<div style="margin-top:6px;font-size:12px;color:var(--text2)">${r.notes}</div>` : ''}
  `;
  tooltip.style.display = 'block';
- const rect = evt.native.target.getBoundingClientRect();
- let x = evt.native.clientX + 12, y = evt.native.clientY - 60;
- if (x + 180 > window.innerWidth) x = evt.native.clientX - 180;
+ let x = evt.native.clientX + 14;
+ let y = evt.native.clientY - 30;
+ const ttRect = tooltip.getBoundingClientRect();
+ if (x + ttRect.width > window.innerWidth - 8) x = evt.native.clientX - ttRect.width - 14;
+ if (y < 8) y = 8;
+ if (y + ttRect.height > window.innerHeight - 8) y = window.innerHeight - ttRect.height - 8;
  tooltip.style.left = x + 'px';
  tooltip.style.top = y + 'px';
- setTimeout(() => { document.addEventListener('click', hideTooltip, { once: true }); }, 10);
+ } else {
+ if (lastTooltipIdx !== null) {
+ tooltip.style.display = 'none';
+ lastTooltipIdx = null;
+ }
  }
  }
  }
  });
+ // Also hide the tooltip if the mouse leaves the canvas entirely.
+ canvas.onmouseleave = () => {
+ const tooltip = document.getElementById('chartTooltip');
+ if (tooltip) tooltip.style.display = 'none';
+ lastTooltipIdx = null;
+ };
 }
 
 function hideTooltip() {
@@ -2106,7 +2218,7 @@ function saveEdit() {
  r.sys = +document.getElementById('e-sys').value;
  r.dia = +document.getElementById('e-dia').value;
  r.bpm = +document.getElementById('e-bpm').value || null;
- r.device = document.getElementById('e-device').value.trim();
+ r.device = normalizeDeviceName(document.getElementById('e-device').value);
  const d = document.getElementById('e-d').value;
  const t = document.getElementById('e-t').value;
  const dt = combineDT(d, t);
@@ -2115,6 +2227,7 @@ function saveEdit() {
  r.notes = document.getElementById('e-notes').value.trim();
  records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
+ updateDeviceOptions();
  closeModal();
  renderData();
 }
@@ -2223,7 +2336,7 @@ function importCSVText(text) {
 
  const bpmStr = idx.bpm >= 0 ? (fields[idx.bpm] || '').trim() : '';
  const bpm = bpmStr ? parseInt(bpmStr, 10) : null;
- const device = idx.device >= 0 ? (fields[idx.device] || '').trim() : '';
+ const device = idx.device >= 0 ? normalizeDeviceName(fields[idx.device] || '') : '';
  const notes = idx.notes >= 0 ? (fields[idx.notes] || '').trim() : '';
 
  newRecords.push({ id: genId(), sys, dia, bpm: isNaN(bpm) ? null : bpm, device, dt, notes });
@@ -2235,6 +2348,7 @@ function importCSVText(text) {
  records.push(...newRecords);
  records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
+ updateDeviceOptions();
  renderData();
  }
  return { added, skipped, errors };
@@ -2285,6 +2399,7 @@ function parseCSVLine(line) {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 setEntryAccordion();
+updateDeviceOptions();
 renderData();
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js"></script>
