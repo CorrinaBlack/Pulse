@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.20 — 2026-06-15 | Editable device combo box (datalist from records, Title-Case normalized, brand caps preserved); colored avg stat cards matching chart lines; chart tooltip on hover (was click) with per-line breakdown; combined Date+Time column; all table columns sortable with arrow indicator; default sort Date+Time descending -->
+<!-- Pulse v6.21 — 2026-06-15 | Chart tooltip back to click (mobile-friendly); 2-digit year in data list & chart tooltip; edit/delete are icon buttons (✎ ✕); notes get a 💬 popup icon when clipped (tap to see full note in same popup style as chart); data list scrolls inside a ~50-row container with sticky header -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -219,7 +219,7 @@
  transition: max-height 0.35s ease;
  background: var(--surface);
  }
- .accordion.open .accordion-body { max-height: 3000px; }
+ .accordion.open .accordion-body { max-height: 5000px; }
  .accordion-inner { padding: 18px; border-top: 1px solid var(--border); }
 
  /* FDA CATEGORIES */
@@ -616,6 +616,22 @@
  .pivot-btn.active { border-color: var(--accent); color: var(--accent); }
 
  .data-table { width: 100%; border-collapse: collapse; }
+ .data-table-wrap {
+ /* Holds roughly 50 rows (each ~34px) plus the ~32px sticky header.
+ Above 50 rows, the wrap scrolls vertically; horizontal overflow scrolls too. */
+ max-height: 1740px;
+ overflow-y: auto;
+ overflow-x: auto;
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ }
+ .data-table thead th {
+ position: sticky;
+ top: 0;
+ background: var(--surface);
+ z-index: 2;
+ box-shadow: 0 1px 0 var(--border);
+ }
  .data-table th {
  font-family: 'DM Mono', monospace;
  font-size: 10px;
@@ -640,6 +656,33 @@
  color: var(--accent);
  }
  .sort-arrow.inactive { color: var(--text3); opacity: 0.4; }
+ .data-table .cell-device,
+ .data-table .cell-notes {
+ color: var(--text2);
+ max-width: 160px;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ }
+ .data-table .cell-notes .notes-text {
+ display: inline-block;
+ vertical-align: middle;
+ max-width: calc(100% - 26px);
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ }
+ .notes-icon {
+ background: transparent;
+ border: none;
+ color: var(--accent);
+ cursor: pointer;
+ padding: 0 6px 0 0;
+ font-size: 14px;
+ line-height: 1;
+ vertical-align: middle;
+ }
+ .notes-icon:hover { color: var(--text); }
  .data-table td {
  padding: 9px 8px;
  border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -656,16 +699,22 @@
  font-family: 'DM Mono', monospace;
  letter-spacing: 0.5px;
  }
- .td-actions { display: flex; gap: 6px; }
+ .td-actions { display: flex; gap: 4px; }
  .act-btn {
- padding: 4px 10px;
+ width: 28px;
+ height: 28px;
+ padding: 0;
  border-radius: 5px;
- font-size: 11px;
+ font-size: 14px;
+ line-height: 1;
  cursor: pointer;
  border: 1px solid var(--border);
  background: transparent;
  font-family: 'DM Sans', sans-serif;
  transition: var(--transition);
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
  }
  .act-edit { color: var(--text2); }
  .act-edit:hover { border-color: var(--accent); color: var(--accent); }
@@ -931,7 +980,13 @@ let records = loadData();
 let editingId = null;
 let ocrQueue = [];
 let chartInstance = null;
-let lastTooltipIdx = null;
+
+// HTML escape helper for user-controlled text (notes, device names) — protects
+// against accidental angle-bracket content and XSS.
+function escapeHtml(s) {
+ if (s == null) return '';
+ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 let currentSort = { column: 'date', direction: 'desc' };
 let filterStart = null, filterEnd = null;
 
@@ -1950,7 +2005,7 @@ function renderData() {
 
  <div style="height:24px"></div>
 
- <div style="overflow-x:auto">
+ <div class="data-table-wrap">
  <table class="data-table">
  <thead>
  <tr>
@@ -2009,7 +2064,6 @@ function renderTable(filtered) {
  const catOrder = ['Hypotension','Normal','Elevated','High Stage 1','High Stage 2','Crisis'];
 
  const sorted = [...filtered].sort((a, b) => {
- // Always sink empty/null values to the bottom regardless of direction
  const nullishA = (col === 'bpm' && a.bpm == null) ||
  ((col === 'device' || col === 'notes') && !a[col]);
  const nullishB = (col === 'bpm' && b.bpm == null) ||
@@ -2041,22 +2095,59 @@ function renderTable(filtered) {
  body.innerHTML = sorted.map(r => {
  const dt = new Date(r.dt);
  const cat = bpCategory(r.sys, r.dia);
- const dtStr = dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}) +
+ const dtStr = dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'}) +
  ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+ const notesHtml = r.notes ? escapeHtml(r.notes) : '—';
  return `<tr>
  <td class="mono">${dtStr}</td>
  <td class="mono">${r.sys}</td>
  <td class="mono">${r.dia}</td>
  <td class="mono">${r.bpm||'—'}</td>
- <td style="color:var(--text2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.device||'—'}</td>
- <td style="color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.notes||'—'}</td>
+ <td class="cell-device">${escapeHtml(r.device || '') || '—'}</td>
+ <td class="cell-notes" data-record-id="${r.id}">${notesHtml}</td>
  <td><span class="bp-badge" style="background:${cat.color}22;color:${cat.color}">${cat.label}</span></td>
  <td><div class="td-actions">
- <button class="act-btn act-edit" onclick="openEdit('${r.id}')">Edit</button>
- <button class="act-btn act-delete" onclick="deleteRecord('${r.id}')">Delete</button>
+ <button class="act-btn act-edit" onclick="openEdit('${r.id}')" title="Edit" aria-label="Edit">✎</button>
+ <button class="act-btn act-delete" onclick="deleteRecord('${r.id}')" title="Delete" aria-label="Delete">✕</button>
  </div></td>
  </tr>`;
  }).join('');
+
+ // After paint, detect which notes cells are clipped and prepend a popup icon.
+ // The cell uses `overflow: hidden; text-overflow: ellipsis; white-space: nowrap`,
+ // so scrollWidth > clientWidth reliably indicates a clipped value.
+ requestAnimationFrame(() => {
+ document.querySelectorAll('#tableBody .cell-notes').forEach(cell => {
+ const rid = cell.dataset.recordId;
+ const rec = records.find(x => x.id === rid);
+ if (!rec || !rec.notes) return;
+ if (cell.scrollWidth > cell.clientWidth + 1) { // +1 to avoid sub-pixel false-positives
+ cell.innerHTML = `<button class="notes-icon" onclick="showNotePopup(event,'${rid}')" title="Show full note" aria-label="Show full note">💬</button><span class="notes-text">${escapeHtml(rec.notes)}</span>`;
+ }
+ });
+ });
+}
+
+function showNotePopup(event, recordId) {
+ event.stopPropagation();
+ const r = records.find(x => x.id === recordId);
+ if (!r) return;
+ const tooltip = document.getElementById('chartTooltip');
+ tooltip.innerHTML = `
+ <div class="tt-meta" style="margin-bottom:6px">Note</div>
+ <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;max-width:320px">${escapeHtml(r.notes||'')}</div>
+ `;
+ tooltip.style.display = 'block';
+ const ttRect = tooltip.getBoundingClientRect();
+ let x = event.clientX + 14;
+ let y = event.clientY + 10;
+ if (x + ttRect.width > window.innerWidth - 8) x = event.clientX - ttRect.width - 14;
+ if (x < 8) x = 8;
+ if (y + ttRect.height > window.innerHeight - 8) y = event.clientY - ttRect.height - 10;
+ if (y < 8) y = 8;
+ tooltip.style.left = x + 'px';
+ tooltip.style.top = y + 'px';
+ setTimeout(() => { document.addEventListener('click', hideTooltip, { once: true }); }, 10);
 }
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
@@ -2143,48 +2234,35 @@ function renderChart(data) {
  min: 40
  }
  },
- onHover(evt, activeElements) {
- const tooltip = document.getElementById('chartTooltip');
- if (!tooltip) return;
- if (activeElements && activeElements.length > 0) {
- const idx = activeElements[0].index;
- if (idx === lastTooltipIdx) return; // already showing this point
- lastTooltipIdx = idx;
+ onClick(evt) {
+ const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+ if (!pts.length) return;
+ const idx = pts[0].index;
  const r = data[idx];
  const cat = bpCategory(r.sys, r.dia);
+ const tooltip = document.getElementById('chartTooltip');
  const dt = new Date(r.dt);
  tooltip.innerHTML = `
  <div class="tt-bp" style="color:${cat.color}">${r.sys}/${r.dia}</div>
  <div class="tt-row"><span style="color:#e8624a">Systolic</span> <strong>${r.sys}</strong></div>
  <div class="tt-row"><span style="color:#6ab8d4">Diastolic</span> <strong>${r.dia}</strong></div>
  ${r.bpm ? `<div class="tt-row"><span style="color:#5db87a">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
- <div class="tt-meta" style="margin-top:6px">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
- ${r.notes ? `<div style="margin-top:6px;font-size:12px;color:var(--text2)">${r.notes}</div>` : ''}
+ <div class="tt-meta" style="margin-top:6px">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+ ${r.notes ? `<div style="margin-top:6px;font-size:12px;color:var(--text2)">${escapeHtml(r.notes)}</div>` : ''}
  `;
  tooltip.style.display = 'block';
+ const ttRect = tooltip.getBoundingClientRect();
  let x = evt.native.clientX + 14;
  let y = evt.native.clientY - 30;
- const ttRect = tooltip.getBoundingClientRect();
  if (x + ttRect.width > window.innerWidth - 8) x = evt.native.clientX - ttRect.width - 14;
  if (y < 8) y = 8;
  if (y + ttRect.height > window.innerHeight - 8) y = window.innerHeight - ttRect.height - 8;
  tooltip.style.left = x + 'px';
  tooltip.style.top = y + 'px';
- } else {
- if (lastTooltipIdx !== null) {
- tooltip.style.display = 'none';
- lastTooltipIdx = null;
- }
- }
+ setTimeout(() => { document.addEventListener('click', hideTooltip, { once: true }); }, 10);
  }
  }
  });
- // Also hide the tooltip if the mouse leaves the canvas entirely.
- canvas.onmouseleave = () => {
- const tooltip = document.getElementById('chartTooltip');
- if (tooltip) tooltip.style.display = 'none';
- lastTooltipIdx = null;
- };
 }
 
 function hideTooltip() {
