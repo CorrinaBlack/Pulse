@@ -3,6 +3,2727 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Pulse v6.37 — 2026-06-16 | Chart x-axis labels: MM/DD/YY format (e.g. 06/06/26), no time; each date appears only once — on the leftmost (first-encountered) reading of that day; subsequent same-date points show blank labels -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>BP Pulse — Blood Pressure Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+
+<style>
+ :root {
+ --bg: #0f0f11;
+ --surface: #18181c;
+ --surface2: #222228;
+ --surface3: #2a2a32;
+ --border: #2e2e38;
+ --accent: #e8624a;
+ --accent2: #f0a070;
+ --text: #f0ede8;
+ --text2: #a09a94;
+ --text3: #605a54;
+ --green: #5db87a;
+ --yellow: #e8c44a;
+ --orange: #e8924a;
+ --red: #e85a4a;
+ --purple: #9a6ae8;
+ /* Chart series colors — single source of truth, mirrored in JS as COLORS */
+ --c-systolic: #e8624a;
+ --c-diastolic: #6ab8d4;
+ --c-bpm: #5db87a;
+ --radius: 12px;
+ --radius-sm: 8px;
+ --transition: 0.2s ease;
+ }
+
+ * { box-sizing: border-box; margin: 0; padding: 0; }
+
+ /* Scrollbars: track is transparent so scroll regions blend into the UI;
+ only the thumb is visible (a muted bar that matches our border color). */
+ * { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+ *::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+ *::-webkit-scrollbar-track { background: transparent; border: none; }
+ *::-webkit-scrollbar-thumb {
+ background: var(--border);
+ border-radius: 5px;
+ border: 2px solid transparent;
+ background-clip: padding-box;
+ }
+ *::-webkit-scrollbar-thumb:hover { background: var(--text3); background-clip: padding-box; }
+ *::-webkit-scrollbar-corner { background: transparent; }
+
+ body {
+ background: var(--bg);
+ color: var(--text);
+ font-family: 'DM Sans', sans-serif;
+ font-size: 15px;
+ line-height: 1.5;
+ min-height: 100vh;
+ padding-bottom: 60px;
+ }
+
+ header {
+ padding: 28px 20px 20px;
+ border-bottom: 1px solid var(--border);
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ position: sticky;
+ top: 0;
+ background: var(--bg);
+ z-index: 100;
+ backdrop-filter: blur(12px);
+ }
+
+ .logo {
+ font-family: 'DM Serif Display', serif;
+ font-size: 26px;
+ letter-spacing: -0.5px;
+ color: var(--text);
+ }
+ .logo span { color: var(--accent); font-style: italic; }
+
+ .export-btn {
+ background: transparent;
+ border: 1px solid var(--border);
+ color: var(--text2);
+ padding: 7px 14px;
+ border-radius: var(--radius-sm);
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ cursor: pointer;
+ transition: var(--transition);
+ }
+ .export-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+ /* HAMBURGER MENU */
+ .hamburger-wrap { position: relative; }
+ .hamburger-btn {
+ background: transparent;
+ border: 1px solid var(--border);
+ color: var(--text2);
+ width: 38px;
+ height: 38px;
+ border-radius: var(--radius-sm);
+ cursor: pointer;
+ display: flex;
+ flex-direction: column;
+ justify-content: center;
+ align-items: center;
+ gap: 4px;
+ transition: var(--transition);
+ padding: 0;
+ }
+ .hamburger-btn:hover { border-color: var(--accent); }
+ .hamburger-btn:hover span { background: var(--accent); }
+ .hamburger-btn span {
+ display: block;
+ width: 18px;
+ height: 2px;
+ background: var(--text2);
+ border-radius: 1px;
+ transition: var(--transition);
+ }
+ .hamburger-menu {
+ position: absolute;
+ top: calc(100% + 6px);
+ right: 0;
+ min-width: 180px;
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+ padding: 6px;
+ display: none;
+ z-index: 100;
+ }
+ .hamburger-menu.open { display: block; }
+ .menu-item {
+ display: block;
+ width: 100%;
+ background: transparent;
+ border: none;
+ color: var(--text2);
+ text-align: left;
+ padding: 8px 12px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ cursor: pointer;
+ border-radius: 4px;
+ transition: var(--transition);
+ }
+ .menu-item:hover { background: var(--surface2); color: var(--accent); }
+ .menu-divider {
+ height: 1px;
+ background: var(--border);
+ margin: 4px 0;
+ }
+
+ /* HAMBURGER POPOVER (for BP Categories etc.) */
+ .menu-popover {
+ position: absolute;
+ top: calc(100% + 6px);
+ right: 0;
+ width: min(360px, calc(100vw - 32px));
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+ padding: 14px;
+ display: none;
+ z-index: 100;
+ max-height: calc(100vh - 80px);
+ overflow-y: auto;
+ }
+ .menu-popover.open { display: block; }
+ .menu-popover-title {
+ font-family: 'DM Mono', monospace;
+ font-size: 11px;
+ color: var(--text3);
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ margin-bottom: 10px;
+ }
+
+ main { padding: 0 16px; max-width: 900px; margin: 0 auto; }
+
+ /* ACCORDION */
+ .accordion {
+ border: 1px solid var(--border);
+ border-radius: var(--radius);
+ margin-top: 16px;
+ overflow: hidden;
+ transition: var(--transition);
+ }
+
+ .accordion-header {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ padding: 16px 18px;
+ cursor: pointer;
+ background: var(--surface);
+ user-select: none;
+ transition: background var(--transition);
+ }
+ .accordion-header:hover { background: var(--surface2); }
+
+ .accordion-title {
+ font-family: 'DM Mono', monospace;
+ font-size: 11px;
+ letter-spacing: 1.5px;
+ text-transform: uppercase;
+ color: var(--text2);
+ display: flex;
+ align-items: center;
+ gap: 10px;
+ }
+ .accordion-title .dot {
+ width: 7px; height: 7px;
+ border-radius: 50%;
+ background: var(--accent);
+ }
+
+ .chevron {
+ color: var(--text3);
+ font-size: 12px;
+ transition: transform 0.25s ease;
+ }
+ .accordion.open .chevron { transform: rotate(180deg); }
+
+ .accordion-body {
+ max-height: 0;
+ overflow: hidden;
+ transition: max-height 0.35s ease;
+ background: var(--surface);
+ }
+ .accordion.open .accordion-body { max-height: 5000px; }
+ .accordion-inner { padding: 18px; border-top: 1px solid var(--border); }
+
+ /* FDA CATEGORIES */
+ .cat-grid {
+ display: grid;
+ grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+ gap: 10px;
+ }
+ .cat-card {
+ border-radius: var(--radius-sm);
+ padding: 12px 14px;
+ border-left: 3px solid;
+ }
+ .cat-card .cat-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+ .cat-card .cat-range { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text2); }
+ .cat-normal { border-color: var(--green); background: rgba(93,184,122,0.08); }
+ .cat-elevated { border-color: var(--yellow); background: rgba(232,196,74,0.08); }
+ .cat-high1 { border-color: var(--orange); background: rgba(232,146,74,0.08); }
+ .cat-high2 { border-color: var(--red); background: rgba(232,90,74,0.08); }
+ .cat-crisis { border-color: var(--purple); background: rgba(154,106,232,0.08); }
+ .cat-low { border-color: #6ab8d4; background: rgba(106,184,212,0.08); }
+
+ /* TABS */
+ .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+ .tab {
+ padding: 8px 16px;
+ border-radius: var(--radius-sm);
+ border: 1px solid var(--border);
+ background: transparent;
+ color: var(--text2);
+ font-family: 'DM Sans', sans-serif;
+ font-size: 13px;
+ cursor: pointer;
+ transition: var(--transition);
+ }
+ .tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+ /* MANUAL ENTRY */
+ .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+ .form-group { display: flex; flex-direction: column; gap: 6px; }
+ .form-group label { font-size: 11px; font-family: 'DM Mono', monospace; color: var(--text2); letter-spacing: 0.8px; text-transform: uppercase; }
+ .form-group input, .form-group textarea {
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ color: var(--text);
+ font-family: 'DM Sans', sans-serif;
+ font-size: 15px;
+ padding: 10px 12px;
+ transition: border-color var(--transition);
+ outline: none;
+ width: 100%;
+ }
+ .form-group input:focus, .form-group textarea:focus { border-color: var(--accent); }
+ .form-group textarea { resize: vertical; min-height: 72px; line-height: 1.45; }
+
+ /* Date/time inputs: picker icon on the left */
+ .form-group .dt-input { padding-left: 40px; position: relative; }
+ .form-group .dt-input::-webkit-calendar-picker-indicator {
+ position: absolute;
+ left: 10px;
+ top: 50%;
+ transform: translateY(-50%);
+ cursor: pointer;
+ opacity: 0.7;
+ filter: invert(0.8);
+ }
+ .form-group .dt-input::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+ .form-full { grid-column: 1 / -1; }
+
+ .submit-btn {
+ background: var(--accent);
+ color: white;
+ border: none;
+ padding: 12px 24px;
+ border-radius: var(--radius-sm);
+ font-family: 'DM Sans', sans-serif;
+ font-weight: 600;
+ font-size: 14px;
+ cursor: pointer;
+ transition: background var(--transition);
+ margin-top: 8px;
+ }
+ .submit-btn:hover { background: var(--accent2); }
+
+ /* PHOTO ENTRY */
+ .drop-zone {
+ border: 2px dashed var(--border);
+ border-radius: var(--radius);
+ padding: 36px 20px;
+ text-align: center;
+ cursor: pointer;
+ transition: border-color var(--transition), background var(--transition);
+ position: relative;
+ }
+ .drop-zone.drop-zone-compact { padding: 16px 20px; }
+ .drop-zone:hover, .drop-zone.dragover {
+ border-color: var(--accent);
+ background: rgba(232,98,74,0.05);
+ }
+ .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; color: transparent; }
+ .drop-zone .dz-icon { font-size: 32px; margin-bottom: 10px; }
+ .drop-zone p { color: var(--text2); font-size: 14px; }
+ .drop-zone span { color: var(--accent); }
+ .photo-hint { font-size: 12px; color: var(--text3); margin-top: 8px; }
+
+ /* OCR QUEUE */
+ .ocr-queue { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+ .ocr-item {
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 14px;
+ display: grid;
+ grid-template-columns: auto 1fr;
+ gap: 12px;
+ align-items: stretch;
+ }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; align-self: stretch; }
+ .ocr-item > .ocr-body { grid-column: 2; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+ .ocr-item > .ocr-body .ocr-actions-fallback {
+ display: flex; justify-content: flex-end; gap: 8px; margin-top: auto;
+ }
+ .ocr-thumb-wrap {
+ width: 120px;
+ flex-shrink: 0;
+ background: #0a0a0a;
+ border: 1px solid var(--border);
+ border-radius: 6px;
+ overflow: hidden;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+ min-height: 120px;
+ }
+ .ocr-thumb-wrap img {
+ width: 100%;
+ height: auto;
+ max-height: 180px;
+ object-fit: contain;
+ display: block;
+ }
+ .ocr-thumb-wrap .thumb-placeholder {
+ color: var(--text3);
+ font-size: 11px;
+ font-family: 'DM Mono', monospace;
+ padding: 14px;
+ text-align: center;
+ display: flex;
+ flex-direction: column;
+ align-items: center;
+ gap: 10px;
+ }
+ .ocr-thumb-wrap .thumb-placeholder .spinner-lg {
+ width: 28px; height: 28px;
+ border: 3px solid var(--border);
+ border-top-color: var(--accent);
+ border-radius: 50%;
+ animation: spin 0.8s linear infinite;
+ }
+ @media (max-width: 700px) {
+ .ocr-item { grid-template-columns: 1fr; }
+ .ocr-item > .ocr-thumb-wrap { grid-column: 1; width: 100%; max-width: 240px; align-self: auto; }
+ .ocr-item > .ocr-body { grid-column: 1; }
+ }
+ .ocr-item.warning { border-color: var(--yellow); }
+ .ocr-warn { font-size: 12px; color: var(--yellow); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+ .ocr-fields { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+ .ocr-field { display: flex; flex-direction: column; gap: 3px; }
+ .ocr-field label { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; }
+ .ocr-field input {
+ background: var(--surface3);
+ border: 1px solid var(--border);
+ border-radius: 6px;
+ color: var(--text);
+ font-family: 'DM Mono', monospace;
+ font-size: 14px;
+ padding: 6px 10px;
+ width: 90px;
+ outline: none;
+ }
+ .ocr-field input:focus { border-color: var(--accent); }
+ .ocr-notes input { width: 180px; }
+ .ocr-actions { display: flex; flex-direction: row; gap: 8px; align-items: center; }
+ .btn-sm {
+ padding: 6px 12px;
+ border-radius: 6px;
+ font-size: 12px;
+ cursor: pointer;
+ border: 1px solid var(--border);
+ font-family: 'DM Sans', sans-serif;
+ transition: var(--transition);
+ min-width: 80px;
+ text-align: center;
+ }
+ .btn-commit { background: var(--green); border-color: var(--green); color: white; }
+ .btn-commit:hover { opacity: 0.85; }
+ .btn-remove { background: transparent; color: var(--text3); }
+ .btn-remove:hover { border-color: var(--red); color: var(--red); }
+
+ .ocr-status { font-size: 12px; color: var(--text3); font-family: 'DM Mono', monospace; }
+ .ocr-header-row {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ }
+ .ocr-filename {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ color: var(--text2);
+ font-size: 13px;
+ padding-bottom: 8px;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ min-width: 0;
+ }
+ .ocr-filename span {
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ }
+
+ /* OCR ready-item layout: 3 rows
+ * Row 1: filename | date | time
+ * Row 2: device | sys | dia | bpm
+ * Row 3: notes (flex) | commit | remove */
+ .ocr-grid {
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) 140px 100px;
+ column-gap: 10px;
+ row-gap: 8px;
+ align-items: end;
+ }
+ .ocr-grid .ocr-filename { grid-column: 1; grid-row: 1; align-self: end; }
+ .ocr-grid .ocr-col-date { grid-column: 2; grid-row: 1; }
+ .ocr-grid .ocr-col-time { grid-column: 3; grid-row: 1; }
+
+ .ocr-grid .ocr-row-meas {
+ grid-column: 1 / -1; grid-row: 2;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 140px; min-width: 0; }
+ .ocr-grid .ocr-row-meas .ocr-field-sys,
+ .ocr-grid .ocr-row-meas .ocr-field-dia,
+ .ocr-grid .ocr-row-meas .ocr-field-bpm { flex: 0 0 90px; }
+
+ .ocr-grid .ocr-row-bottom {
+ grid-column: 1 / -1; grid-row: 3;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .ocr-grid .ocr-row-bottom .ocr-col-notes { flex: 1; min-width: 0; }
+ .ocr-grid .ocr-row-bottom .ocr-col-notes input { width: 100%; }
+ .ocr-grid .ocr-row-bottom .ocr-actions {
+ flex: 0 0 auto;
+ align-self: flex-end;
+ padding-bottom: 0;
+ }
+ .ocr-grid .ocr-col-date input,
+ .ocr-grid .ocr-col-time input,
+ .ocr-grid .ocr-col-device input { width: 100%; }
+
+ /* Manual-entry grid — 5 columns: 140 (Date) / 100 (Time) / 3 × 1fr (Sys, Dia, BPM).
+ Row 1: Date, Time. Row 2: Device (cols 1-2) + Sys/Dia/BPM (cols 3-5).
+ Row 3: a flex row spanning all columns — Notes (flex) + Save + Clear buttons.
+ Sys/Dia/BPM right edge therefore aligns with the right edge of the Clear button. */
+ .manual-entry-box {
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 14px;
+ }
+ .manual-grid {
+ display: grid;
+ grid-template-columns: 140px 100px minmax(70px, 1fr) minmax(70px, 1fr) minmax(70px, 1fr);
+ column-gap: 10px;
+ row-gap: 8px;
+ align-items: end;
+ }
+ .manual-grid .manual-col-date { grid-column: 1; grid-row: 1; }
+ .manual-grid .manual-col-time { grid-column: 2; grid-row: 1; }
+ .manual-grid .manual-col-device { grid-column: 1 / span 2; grid-row: 2; }
+ .manual-grid .manual-field-sys { grid-column: 3; grid-row: 2; }
+ .manual-grid .manual-field-dia { grid-column: 4; grid-row: 2; }
+ .manual-grid .manual-field-bpm { grid-column: 5; grid-row: 2; }
+ .manual-grid .manual-row-bottom {
+ grid-column: 1 / -1; grid-row: 3;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .manual-grid .manual-row-bottom .manual-col-notes { flex: 1; min-width: 0; }
+ .manual-grid .manual-row-bottom .manual-col-notes input { width: 100%; }
+ .manual-grid .manual-row-bottom .manual-actions {
+ flex: 0 0 auto;
+ align-self: flex-end;
+ display: flex; gap: 8px;
+ }
+ .manual-grid input { width: 100%; }
+
+ @media (max-width: 700px) {
+ .ocr-grid { grid-template-columns: 1fr 1fr; }
+ .ocr-grid .ocr-filename { grid-column: 1 / -1; grid-row: auto; }
+ .ocr-grid .ocr-col-date { grid-column: 1; grid-row: auto; }
+ .ocr-grid .ocr-col-time { grid-column: 2; grid-row: auto; }
+ .ocr-grid .ocr-row-meas { flex-wrap: wrap; }
+ .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 100%; }
+ .ocr-grid .ocr-row-bottom { flex-wrap: wrap; }
+ .manual-grid {
+ grid-template-columns: 1fr 1fr;
+ }
+ .manual-grid .manual-col-date { grid-column: 1; grid-row: auto; }
+ .manual-grid .manual-col-time { grid-column: 2; grid-row: auto; }
+ .manual-grid .manual-col-device { grid-column: 1 / -1; grid-row: auto; }
+ .manual-grid .manual-field-sys { grid-column: 1; grid-row: auto; }
+ .manual-grid .manual-field-dia { grid-column: 2; grid-row: auto; }
+ .manual-grid .manual-field-bpm { grid-column: 1 / -1; grid-row: auto; }
+ .manual-grid .manual-row-bottom { grid-column: 1 / -1; grid-row: auto; flex-wrap: wrap; }
+ }
+ .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
+ .spinner {
+ width: 14px; height: 14px;
+ border: 2px solid var(--border);
+ border-top-color: var(--accent);
+ border-radius: 50%;
+ animation: spin 0.8s linear infinite;
+ }
+ @keyframes spin { to { transform: rotate(360deg); } }
+
+ /* ─── TOAST ───────────────────────────────────────────────────────────── */
+ .toast-container {
+ position: fixed;
+ bottom: 20px;
+ left: 50%;
+ transform: translateX(-50%);
+ z-index: 10000;
+ display: flex;
+ flex-direction: column;
+ gap: 8px;
+ pointer-events: none;
+ max-width: 90vw;
+ width: 420px;
+ }
+ .toast {
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 10px 12px 10px 14px;
+ color: var(--text);
+ font-size: 13px;
+ line-height: 1.45;
+ pointer-events: auto;
+ display: flex;
+ align-items: flex-start;
+ gap: 10px;
+ box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+ animation: toast-in 0.18s ease-out;
+ }
+ .toast.error { border-left: 3px solid var(--red); }
+ .toast.warning { border-left: 3px solid var(--yellow); }
+ .toast.success { border-left: 3px solid var(--green); }
+ .toast.info { border-left: 3px solid var(--accent); }
+ .toast-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; opacity: 0.85; }
+ .toast-msg { flex: 1; white-space: pre-wrap; word-wrap: break-word; min-width: 0; }
+ .toast-close {
+ background: none; border: none; color: var(--text3);
+ cursor: pointer; padding: 0 4px; font-size: 18px; line-height: 1;
+ flex-shrink: 0;
+ }
+ .toast-close:hover { color: var(--text); }
+ @keyframes toast-in {
+ from { opacity: 0; transform: translateY(8px); }
+ to { opacity: 1; transform: translateY(0); }
+ }
+
+ /* COMMIT ALL */
+ .commit-all-bar {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ margin-top: 16px;
+ padding-top: 14px;
+ border-top: 1px solid var(--border);
+ }
+ .btn-commit-all {
+ background: var(--accent);
+ color: white;
+ border: none;
+ padding: 10px 20px;
+ border-radius: var(--radius-sm);
+ font-weight: 600;
+ font-size: 13px;
+ cursor: pointer;
+ transition: var(--transition);
+ }
+ .btn-commit-all:hover { background: var(--accent2); }
+
+ /* STATS */
+ .stats-row {
+ display: grid;
+ grid-template-columns: 1fr 1fr 1fr;
+ gap: 12px;
+ align-items: center;
+ margin-bottom: 8px;
+ }
+ .stat-card {
+ background: var(--surface2);
+ border-radius: var(--radius-sm);
+ padding: 14px 16px;
+ border: 1px solid var(--border);
+ }
+ .stat-label { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+ .stat-value { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--text); }
+ .stat-value span { font-size: 14px; color: var(--text3); font-family: 'DM Sans', sans-serif; }
+ .stat-pattern { display: block; margin-top: 6px; }
+ .stat-cat-row {
+ font-family: 'DM Mono', monospace;
+ font-size: 11px;
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ margin-top: 8px;
+ margin-bottom: 4px;
+ text-align: right;
+ }
+
+ /* CHART */
+ .chart-wrap {
+ overflow-x: auto;
+ overflow-y: visible;
+ -webkit-overflow-scrolling: touch;
+ position: relative;
+ }
+ .chart-inner { min-width: 100%; position: relative; }
+
+ /* TOOLTIP POPUP */
+ .chart-tooltip-popup {
+ position: fixed;
+ background: var(--surface3);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 10px 14px;
+ font-size: 13px;
+ pointer-events: none;
+ z-index: 999;
+ display: none;
+ min-width: 160px;
+ box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+ }
+ .chart-tooltip-popup .tt-bp { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 2px; }
+ .chart-tooltip-popup .tt-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text2); }
+ .chart-tooltip-popup .tt-row {
+ display: flex;
+ justify-content: space-between;
+ gap: 16px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ padding: 2px 0;
+ }
+ .chart-tooltip-popup .tt-row strong { color: var(--text); font-weight: 600; }
+
+ /* DATA LIST */
+ .list-controls {
+ display: flex;
+ align-items: center;
+ gap: 10px;
+ margin-bottom: 14px;
+ flex-wrap: wrap;
+ }
+ .list-controls span { font-size: 12px; color: var(--text3); font-family: 'DM Mono', monospace; }
+ .pivot-btn {
+ padding: 6px 12px;
+ border-radius: 6px;
+ border: 1px solid var(--border);
+ background: transparent;
+ color: var(--text2);
+ font-size: 12px;
+ cursor: pointer;
+ transition: var(--transition);
+ }
+ .pivot-btn.active { border-color: var(--accent); color: var(--accent); }
+
+ .data-table { width: 100%; border-collapse: collapse; }
+ .data-table-wrap {
+ /* Holds roughly 15 rows (each ~34px) plus the ~32px sticky header.
+ Above 15 rows, the wrap scrolls vertically; horizontal overflow scrolls too. */
+ max-height: 550px;
+ overflow-y: auto;
+ overflow-x: auto;
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ }
+ .data-table thead th {
+ position: sticky;
+ top: 0;
+ background: var(--surface);
+ z-index: 2;
+ box-shadow: 0 1px 0 var(--border);
+ }
+ .data-table th {
+ font-family: 'DM Mono', monospace;
+ font-size: 10px;
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ color: var(--text3);
+ text-align: left;
+ padding: 8px 8px;
+ border-bottom: 1px solid var(--border);
+ white-space: nowrap;
+ }
+ .data-table th.sortable {
+ cursor: pointer;
+ user-select: none;
+ transition: var(--transition);
+ }
+ .data-table th.sortable:hover { color: var(--accent); }
+ .sort-arrow {
+ display: inline-block;
+ margin-left: 4px;
+ font-size: 11px;
+ color: var(--accent);
+ }
+ .sort-arrow.inactive { color: var(--text3); opacity: 0.4; }
+ .data-table .cell-device {
+ color: var(--text2);
+ max-width: 160px;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ }
+ .data-table .cell-notes {
+ width: 44px;
+ text-align: center;
+ padding-left: 4px;
+ padding-right: 4px;
+ }
+ .data-table .cell-notes::before {
+ /* Reserve a tiny zero-width spacer so the column doesn't fully collapse when no notes exist */
+ content: '';
+ }
+ .data-table td {
+ padding: 9px 8px;
+ border-bottom: 1px solid rgba(255,255,255,0.04);
+ font-size: 12px;
+ vertical-align: middle;
+ }
+ .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+ .data-table td.mono { font-family: 'DM Mono', monospace; }
+ .bp-badge {
+ display: inline-block;
+ padding: 2px 8px;
+ border-radius: 20px;
+ font-size: 10px;
+ font-family: 'DM Mono', monospace;
+ letter-spacing: 0.5px;
+ }
+ .td-actions { display: flex; gap: 4px; }
+ .act-btn {
+ width: 28px;
+ height: 28px;
+ padding: 0;
+ border-radius: 5px;
+ font-size: 14px;
+ line-height: 1;
+ cursor: pointer;
+ border: 1px solid var(--border);
+ background: transparent;
+ font-family: 'DM Sans', sans-serif;
+ transition: var(--transition);
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
+ }
+ .act-edit { color: var(--text2); }
+ .act-edit:hover { border-color: var(--accent); color: var(--accent); }
+ .act-notes { color: var(--text2); font-size: 16px; }
+ .act-notes:hover { border-color: var(--accent); color: var(--accent); }
+ .act-delete { color: var(--text3); }
+ .act-delete:hover { border-color: var(--red); color: var(--red); }
+
+ .empty-state {
+ text-align: center;
+ padding: 48px 20px;
+ color: var(--text3);
+ }
+ .empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; }
+ .empty-state p { font-size: 14px; }
+
+ /* EDIT MODAL */
+ .modal-overlay {
+ position: fixed; inset: 0;
+ background: rgba(0,0,0,0.7);
+ z-index: 200;
+ display: none;
+ align-items: center;
+ justify-content: center;
+ padding: 20px;
+ }
+ .modal-overlay.open { display: flex; }
+ .modal {
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius);
+ padding: 24px;
+ width: 100%;
+ max-width: 460px;
+ }
+ .modal h3 { font-family: 'DM Serif Display', serif; font-size: 22px; margin-bottom: 18px; }
+ .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+ .btn-cancel { background: transparent; border: 1px solid var(--border); color: var(--text2); padding: 9px 18px; border-radius: var(--radius-sm); cursor: pointer; font-family: 'DM Sans', sans-serif; }
+ .btn-save { background: var(--accent); border: none; color: white; padding: 9px 18px; border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+
+ /* NO DATA */
+ .no-data-msg {
+ text-align: center;
+ padding: 32px 20px;
+ color: var(--text3);
+ font-size: 13px;
+ }
+
+ @media (max-width: 600px) {
+ .stats-row { grid-template-columns: 1fr 1fr; }
+ .form-grid { grid-template-columns: 1fr; }
+ .cat-grid { grid-template-columns: 1fr 1fr; }
+ .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
+ }
+</style>
+</head>
+<body>
+
+<header>
+ <div class="logo">BP <span>Pulse</span></div>
+ <div class="hamburger-wrap">
+ <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleMenu(event)" aria-label="Menu">
+ <span></span><span></span><span></span>
+ </button>
+ <div class="hamburger-menu" id="hamburgerMenu">
+ <button class="menu-item" onclick="toggleApiPanel();closeMenu()">⚙ API Key</button>
+ <div class="menu-divider"></div>
+ <button class="menu-item" onclick="openCategoriesPopover();closeMenu()">📊 BP Categories</button>
+ <div class="menu-divider"></div>
+ <button class="menu-item" onclick="exportCSV();closeMenu()">↓ Export CSV</button>
+ <button class="menu-item" onclick="triggerImportCSV();closeMenu()">↑ Import CSV</button>
+ </div>
+ <!-- BP CATEGORIES POPOVER -->
+ <div class="menu-popover" id="categoriesPopover" role="dialog" aria-label="FDA BP Categories">
+ <div class="menu-popover-title">FDA BP Categories</div>
+ <div class="cat-grid" style="grid-template-columns:1fr;gap:8px">
+ <div class="cat-card cat-low">
+ <div class="cat-name" style="color:#6ab8d4">Hypotension</div>
+ <div class="cat-range">Below 90/60 mmHg</div>
+ </div>
+ <div class="cat-card cat-normal">
+ <div class="cat-name" style="color:var(--green)">Normal</div>
+ <div class="cat-range">Below 120/80 mmHg</div>
+ </div>
+ <div class="cat-card cat-elevated">
+ <div class="cat-name" style="color:var(--yellow)">Elevated</div>
+ <div class="cat-range">120–129 / below 80 mmHg</div>
+ </div>
+ <div class="cat-card cat-high1">
+ <div class="cat-name" style="color:var(--orange)">High 1</div>
+ <div class="cat-range">130–139 / 80–89 mmHg</div>
+ </div>
+ <div class="cat-card cat-high2">
+ <div class="cat-name" style="color:var(--red)">High 2</div>
+ <div class="cat-range">140+ / 90+ mmHg</div>
+ </div>
+ <div class="cat-card cat-crisis">
+ <div class="cat-name" style="color:var(--purple)">Hypertensive Crisis</div>
+ <div class="cat-range">180+ / 120+ mmHg</div>
+ </div>
+ </div>
+ </div>
+ <input type="file" id="csvImportInput" accept=".csv,text/csv" style="display:none" onchange="handleCSVImport(event)" />
+ </div>
+</header>
+
+<!-- API KEY PANEL -->
+<div id="apiPanel" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;">
+ <div style="max-width:900px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+ <div style="flex:1;min-width:220px">
+ <label style="font-size:10px;font-family:'DM Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Anthropic API Key</label>
+ <input type="password" id="apiKeyInput" placeholder="sk-ant-…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:8px 12px;outline:none;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+ </div>
+ <div style="display:flex;gap:8px;align-items:flex-end;padding-top:18px">
+ <button class="submit-btn" style="margin-top:0;padding:9px 18px;font-size:13px" onclick="saveApiKey()">Save Key</button>
+ <button class="export-btn" onclick="clearApiKey()">Clear</button>
+ </div>
+ <div style="font-size:12px;color:var(--text3);flex-basis:100%">🔒 Stored only in your browser's localStorage — never sent anywhere except directly to api.anthropic.com</div>
+ </div>
+</div>
+
+
+<main>
+ <!-- DATA ENTRY -->
+ <div class="accordion" id="acc-entry">
+ <div class="accordion-header" onclick="toggleAccordion('acc-entry')">
+ <div class="accordion-title">Add BP Measurement</div>
+ <div class="chevron">▼</div>
+ </div>
+ <div class="accordion-body">
+ <div class="accordion-inner">
+ <div class="tabs">
+ <button class="tab" id="tab-photo" onclick="switchTab('photo')">📷 Photo Entry</button>
+ <button class="tab" id="tab-manual" onclick="switchTab('manual')">✏️ Manual Entry</button>
+ </div>
+
+ <!-- PHOTO TAB -->
+ <div id="pane-photo">
+ <div class="drop-zone drop-zone-compact" id="dropZone">
+ <input type="file" accept=".png,.jpg,.jpeg,.heic,image/heic" multiple id="fileInput" onchange="handleFiles(this.files)" />
+ <p>Drag and drop or <span>browse</span> to upload up to 10 photos at a time.</p>
+ </div>
+ <div id="ocrQueue" class="ocr-queue"></div>
+ <div id="commitAllBar" class="commit-all-bar" style="display:none">
+ <span style="font-size:13px;color:var(--text2)" id="queueCount"></span>
+ <button class="btn-commit-all" onclick="commitAll()">Save All</button>
+ </div>
+ </div>
+
+ <!-- MANUAL TAB -->
+ <div id="pane-manual" style="display:none">
+ <div class="manual-entry-box">
+ <div class="manual-grid">
+ <div class="ocr-field manual-col-date"><label>Date</label><input type="date" id="m-d" class="dt-input" /></div>
+ <div class="ocr-field manual-col-time"><label>Time</label><input type="time" id="m-t" class="dt-input" /></div>
+ <div class="ocr-field manual-col-device"><label>Device</label><input type="text" id="m-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" /></div>
+ <div class="ocr-field manual-field-sys"><label>Systolic</label><input type="number" id="m-sys" placeholder="120" min="40" max="300" /></div>
+ <div class="ocr-field manual-field-dia"><label>Diastolic</label><input type="number" id="m-dia" placeholder="80" min="20" max="200" /></div>
+ <div class="ocr-field manual-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
+ <div class="manual-row-bottom">
+ <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
+ <div class="manual-actions">
+ <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
+ <button class="btn-sm btn-remove" onclick="clearManualForm()">Clear</button>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ <!-- DATA DISPLAY -->
+ <div class="accordion open" id="acc-data">
+ <div class="accordion-header" onclick="toggleAccordion('acc-data')">
+ <div class="accordion-title">Measurements &amp; Trends</div>
+ <div class="chevron">▼</div>
+ </div>
+ <div class="accordion-body">
+ <div class="accordion-inner" id="dataSection">
+ <div class="no-data-msg">No measurements yet — add your first reading above.</div>
+ </div>
+ </div>
+ </div>
+
+</main>
+
+<!-- EDIT MODAL -->
+<div class="modal-overlay" id="editModal">
+ <div class="modal">
+ <h3>Edit Measurement</h3>
+ <div class="form-grid">
+ <div class="form-group">
+ <label>Systolic</label>
+ <input type="number" id="e-sys" />
+ </div>
+ <div class="form-group">
+ <label>Diastolic</label>
+ <input type="number" id="e-dia" />
+ </div>
+ <div class="form-group">
+ <label>BPM</label>
+ <input type="number" id="e-bpm" />
+ </div>
+ <div class="form-group">
+ <label>Device</label>
+ <input type="text" id="e-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" />
+ </div>
+ <div class="form-group">
+ <label>Date</label>
+ <input type="date" id="e-d" class="dt-input" />
+ </div>
+ <div class="form-group">
+ <label>Time</label>
+ <input type="time" id="e-t" class="dt-input" />
+ </div>
+ <div class="form-group form-full">
+ <label>Notes</label>
+ <textarea id="e-notes"></textarea>
+ </div>
+ </div>
+ <div class="modal-actions">
+ <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+ <button class="btn-save" onclick="saveEdit()">Save Changes</button>
+ </div>
+ </div>
+</div>
+
+<!-- CHART TOOLTIP -->
+<div class="chart-tooltip-popup" id="chartTooltip"></div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- DEVICE NAME OPTIONS (populated dynamically from records) -->
+<datalist id="deviceOptions"></datalist>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+// All tunable constants in one place. Pixel sizes are in source-image space
+// unless noted otherwise.
+const CONFIG = {
+ // Image / API sizing
+ OPUS_MAX_DIM: 2576, // Opus 4.7 max image dim
+ MAX_BASE64: 5242880 - 50000, // ~5MB API limit with small safety margin
+ // Thumbnail and preview dims
+ THUMB_FALLBACK_MAX_DIM: 240, // queue fallback thumb size
+ THUMB_DESKEWED_MAX_DIM: 360, // post-deskew thumb shown in queue
+ BBOX_PREVIEW_MAX_DIM: 1200, // image sent to Opus for bbox detection
+ CARDINAL_PREVIEW_MAX_DIM: 500, // image sent to Opus for cardinal orientation
+ EDGE_DETECT_MAX_DIM: 800, // canvas size for Sobel edge detection
+ // Timeouts (ms)
+ IMAGE_LOAD_TIMEOUT_MS: 40000,
+ HEIC_CONVERT_TIMEOUT_MS: 30000,
+ NATIVE_DECODE_TIMEOUT_MS: 5000,
+ CONVERTED_HEIC_LOAD_TIMEOUT_MS: 10000,
+ // OCR pipeline
+ MAX_FILES_PER_BATCH: 10,
+ OCR_CONCURRENCY: 3, // how many files OCR in parallel (rate-limit-safe)
+ BBOX_PADDING_PCT: 0.25, // % padding around Opus bbox in source coords
+ PAD_MULT_NORMAL: 1.5, // canvas = LCD × this when actual LCD dims known
+ PAD_MULT_FALLBACK: 1.2, // canvas = bbox × this when math falls back to bbox
+ // Storage
+ STORAGE_KEY: 'pulse_bp_data',
+ API_KEY_STORAGE: 'pulse_anthropic_key',
+ // Anthropic
+ CLAUDE_MODEL: 'claude-opus-4-7',
+ CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
+ CLAUDE_API_VERSION: '2023-06-01',
+};
+
+// Chart series colors, mirrored from CSS :root variables so JS has one source
+// of truth and the CSS controls the actual hex. Read once on load.
+const COLORS = (() => {
+ const root = getComputedStyle(document.documentElement);
+ return {
+ systolic: root.getPropertyValue('--c-systolic').trim() || '#e8624a',
+ diastolic: root.getPropertyValue('--c-diastolic').trim() || '#6ab8d4',
+ bpm: root.getPropertyValue('--c-bpm').trim() || '#5db87a',
+ };
+})();
+
+// ─── DATA STORE ───────────────────────────────────────────────────────────────
+const STORAGE_KEY = CONFIG.STORAGE_KEY;
+const DATA_VERSION = 1;
+
+function loadData() {
+ try {
+ const raw = localStorage.getItem(STORAGE_KEY);
+ if (!raw) return [];
+ const parsed = JSON.parse(raw);
+ // Legacy format: stored as a bare array. Migrate to versioned envelope.
+ if (Array.isArray(parsed)) return migrateData(parsed, 0);
+ // Versioned format: { version, records }
+ return migrateData(parsed.records || [], parsed.version || 0);
+ } catch { return []; }
+}
+
+function saveData(data) {
+ localStorage.setItem(STORAGE_KEY, JSON.stringify({
+ version: DATA_VERSION,
+ records: data,
+ }));
+}
+
+// Schema migration. Add a case for each new DATA_VERSION as the data model
+// changes. Called by loadData() — kept idempotent so re-running is safe.
+function migrateData(records, fromVersion) {
+ let r = records;
+ // Example pattern for future migrations:
+ // if (fromVersion < 1) { r = r.map(rec => ({ ...rec, newField: '' })); }
+ return r;
+}
+
+let records = loadData();
+let editingId = null;
+let ocrQueue = [];
+let chartInstance = null;
+
+// HTML escape helper for user-controlled text (notes, device names) — protects
+// against accidental angle-bracket content and XSS.
+function escapeHtml(s) {
+ if (s == null) return '';
+ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Non-blocking toast notification. Replaces alert() across the app.
+// kind: 'info' | 'success' | 'warning' | 'error'
+// ms: auto-dismiss after this many ms; pass 0 to keep open until user dismisses.
+// Error toasts default to a longer display; the user can always dismiss with ✕.
+function toast(message, kind = 'info', ms) {
+ const container = document.getElementById('toastContainer');
+ if (!container) { console.warn('toast() before container ready:', message); return; }
+ const t = document.createElement('div');
+ t.className = 'toast ' + kind;
+ const icons = { info: 'ℹ', success: '✓', warning: '⚠', error: '✕' };
+ const icon = icons[kind] || icons.info;
+ // textContent for the message body protects against HTML in `message`
+ t.innerHTML = '<span class="toast-icon">' + icon + '</span><div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss">×</button>';
+ t.querySelector('.toast-msg').textContent = message;
+ const remove = () => {
+ t.style.transition = 'opacity 0.18s ease';
+ t.style.opacity = '0';
+ setTimeout(() => t.remove(), 200);
+ };
+ t.querySelector('.toast-close').onclick = remove;
+ container.appendChild(t);
+ const dwell = ms != null ? ms : (kind === 'error' ? 8000 : 5000);
+ if (dwell > 0) setTimeout(remove, dwell);
+}
+let currentSort = { column: 'date', direction: 'desc' };
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+
+function fmtDT(iso) {
+ const d = new Date(iso);
+ return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+ + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+}
+
+function bpCategory(sys, dia) {
+ if (sys >= 180 || dia >= 120) return { label:'Crisis', color:'var(--purple)' };
+ if (sys >= 140 || dia >= 90) return { label:'High 2', color:'var(--red)' };
+ if (sys >= 130 || dia >= 80) return { label:'High 1', color:'var(--orange)' };
+ if (sys >= 120 && dia < 80) return { label:'Elevated', color:'var(--yellow)' };
+ if (sys < 90 || dia < 60) return { label:'Hypotension', color:'#6ab8d4' };
+ return { label:'Normal', color:'var(--green)' };
+}
+
+function nowLocalISO() {
+ const d = new Date();
+ const off = d.getTimezoneOffset() * 60000;
+ return new Date(d - off).toISOString().slice(0,16);
+}
+
+// Detect rotation angle (in degrees, CW to apply for deskewing) from the dominant
+// edge directions in a canvas. Uses Sobel gradient + angle histogram, then finds
+// the tilt θ ∈ [-44, 45] where gradient peaks at θ and θ+90 give maximum energy
+// (i.e., the LCD's perpendicular edge pairs would be axis-aligned after rotation).
+function detectRotationFromEdges(canvas) {
+ try {
+ const w = canvas.width, h = canvas.height;
+ const ctx = canvas.getContext('2d');
+ const imgData = ctx.getImageData(0, 0, w, h);
+ const data = imgData.data;
+ // Grayscale
+ const gray = new Float32Array(w * h);
+ for (let i = 0; i < w * h; i++) {
+ gray[i] = 0.299 * data[i*4] + 0.587 * data[i*4+1] + 0.114 * data[i*4+2];
+ }
+ // Sobel + histogram of gradient angles in [0, 180)
+ const histogram = new Float32Array(180);
+ let totalMass = 0;
+ for (let y = 1; y < h - 1; y++) {
+ for (let x = 1; x < w - 1; x++) {
+ const idx = y * w + x;
+ const gx = -gray[idx - w - 1] + gray[idx - w + 1]
+ - 2 * gray[idx - 1] + 2 * gray[idx + 1]
+ - gray[idx + w - 1] + gray[idx + w + 1];
+ const gy = -gray[idx - w - 1] - 2 * gray[idx - w] - gray[idx - w + 1]
+ + gray[idx + w - 1] + 2 * gray[idx + w] + gray[idx + w + 1];
+ const mag = Math.sqrt(gx * gx + gy * gy);
+ if (mag < 40) continue;
+ let angle = Math.atan2(gy, gx) * 180 / Math.PI;
+ angle = (angle + 180) % 180;
+ histogram[Math.floor(angle) % 180] += mag;
+ totalMass += mag;
+ }
+ }
+ if (totalMass < 1000) {
+ console.log('Pulse: edge detection found insufficient edge energy, returning 0°');
+ return 0;
+ }
+ // Find tilt θ ∈ [-44, 45] that maximizes histogram[θ] + histogram[θ+90]
+ // (with a small ±1° smoothing window)
+ let bestTilt = 0;
+ let bestScore = 0;
+ for (let t = -44; t <= 45; t++) {
+ let score = 0;
+ for (let d = -1; d <= 1; d++) {
+ const a = ((t + d) % 180 + 180) % 180;
+ const b = ((t + d + 90) % 180 + 180) % 180;
+ score += histogram[a] + histogram[b];
+ }
+ if (score > bestScore) {
+ bestScore = score;
+ bestTilt = t;
+ }
+ }
+ // Deskew rotation = -tilt (canvas rotate positive = CW)
+ const deskew = -bestTilt;
+ console.log('Pulse: edge-detection tilt=' + bestTilt + '° → deskew rotation=' + deskew + '°');
+ return deskew;
+ } catch(e) {
+ console.log('Pulse: edge detection failed:', e.message);
+ return 0;
+ }
+}
+
+// Split ISO datetime (YYYY-MM-DDTHH:MM) into separate date + time strings
+function splitDT(iso) {
+ if (!iso || !iso.includes('T')) {
+ const now = nowLocalISO();
+ const [d, t] = now.split('T');
+ return { d, t };
+ }
+ const [d, t] = iso.split('T');
+ return { d, t: t.slice(0,5) };
+}
+
+// Combine date + time into ISO datetime; returns null if either is missing
+function combineDT(d, t) {
+ if (!d || !t) return null;
+ return d + 'T' + t.slice(0,5);
+}
+
+// ─── ACCORDION ────────────────────────────────────────────────────────────────
+function toggleMenu(e) {
+ if (e) e.stopPropagation();
+ const m = document.getElementById('hamburgerMenu');
+ m.classList.toggle('open');
+}
+
+function closeMenu() {
+ document.getElementById('hamburgerMenu').classList.remove('open');
+}
+
+function openCategoriesPopover() {
+ document.getElementById('categoriesPopover').classList.add('open');
+}
+
+function closeCategoriesPopover() {
+ document.getElementById('categoriesPopover').classList.remove('open');
+}
+
+// Close hamburger / popover when clicking outside the hamburger area
+document.addEventListener('click', (e) => {
+ const wrap = document.querySelector('.hamburger-wrap');
+ if (wrap && !wrap.contains(e.target)) {
+ closeMenu();
+ closeCategoriesPopover();
+ }
+});
+
+function toggleAccordion(id) {
+ document.getElementById(id).classList.toggle('open');
+}
+
+function setEntryAccordion() {
+ const hasData = records.length > 0;
+ const hasPending = ocrQueue.length > 0;
+ const el = document.getElementById('acc-entry');
+ if (hasData && !hasPending) { el.classList.remove('open'); }
+ else { el.classList.add('open'); }
+}
+
+// ─── TABS ─────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+ document.getElementById('pane-photo').style.display = tab === 'photo' ? 'block' : 'none';
+ document.getElementById('pane-manual').style.display = tab === 'manual' ? 'block' : 'none';
+ document.getElementById('tab-photo').classList.toggle('active', tab === 'photo');
+ document.getElementById('tab-manual').classList.toggle('active', tab === 'manual');
+}
+
+// Init default tab
+switchTab('photo');
+
+// Set default date and time for manual entry
+const _initDT = splitDT(nowLocalISO());
+document.getElementById('m-d').value = _initDT.d;
+document.getElementById('m-t').value = _initDT.t;
+
+// ─── DRAG & DROP ──────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+ e.preventDefault();
+ dropZone.classList.remove('dragover');
+ handleFiles(e.dataTransfer.files);
+});
+
+// ─── API KEY MANAGEMENT ───────────────────────────────────────────────────────
+const API_KEY_STORAGE = CONFIG.API_KEY_STORAGE;
+
+function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
+
+function saveApiKey() {
+ const val = document.getElementById('apiKeyInput').value.trim();
+ if (!val) { toast('Please enter an API key.', 'warning'); return; }
+ localStorage.setItem(API_KEY_STORAGE, val);
+ updateApiKeyBtn();
+ toggleApiPanel();
+ toast('API key saved.', 'success');
+}
+
+function clearApiKey() {
+ localStorage.removeItem(API_KEY_STORAGE);
+ document.getElementById('apiKeyInput').value = '';
+ updateApiKeyBtn();
+}
+
+function updateApiKeyBtn() {
+ // Header button replaced by hamburger menu; this is now a no-op kept for compatibility
+ const btn = document.getElementById('apiKeyBtn');
+ if (!btn) return;
+ btn.textContent = getApiKey() ? '✓ API Key' : '⚙ API Key';
+ btn.style.color = getApiKey() ? 'var(--green)' : '';
+ btn.style.borderColor = getApiKey() ? 'var(--green)' : '';
+}
+
+function toggleApiPanel() {
+ const panel = document.getElementById('apiPanel');
+ const isOpen = panel.style.display !== 'none';
+ panel.style.display = isOpen ? 'none' : 'block';
+ if (!isOpen) {
+ document.getElementById('apiKeyInput').value = getApiKey();
+ setTimeout(() => document.getElementById('apiKeyInput').focus(), 50);
+ }
+}
+
+// ─── CLAUDE API HELPER ────────────────────────────────────────────────────────
+// AbortController registry — every in-flight fetch registers its controller
+// so we can cancel everything when the user closes the tab. processOcrFile
+// also stores a per-item controller so Remove can cancel that item's work.
+const _inflightAborts = new Set();
+window.addEventListener('beforeunload', () => {
+ _inflightAborts.forEach(c => { try { c.abort(); } catch(e) {} });
+});
+
+// Single wrapper for /v1/messages calls. Returns parsed JSON or throws with
+// a useful error message containing status + API error text. Pass an
+// AbortSignal to make the request cancellable.
+async function callClaude(apiKey, body, signal) {
+ const res = await fetch(CONFIG.CLAUDE_API_URL, {
+ method: 'POST',
+ headers: {
+ 'Content-Type': 'application/json',
+ 'x-api-key': apiKey,
+ 'anthropic-version': CONFIG.CLAUDE_API_VERSION,
+ 'anthropic-dangerous-direct-browser-access': 'true'
+ },
+ body: JSON.stringify(body),
+ signal: signal || undefined,
+ });
+ if (!res.ok) {
+ const err = await res.json().catch(() => ({}));
+ throw new Error('Claude API ' + res.status + ': ' + (err?.error?.message || JSON.stringify(err).slice(0, 200)));
+ }
+ return res.json();
+}
+
+// ─── CANVAS RENDER HELPERS ────────────────────────────────────────────────────
+// Encode a canvas to base64 within CONFIG.MAX_BASE64. Prefers PNG; falls back
+// to progressively-lower-quality JPEG. Returns { b64, type, w, h, dataUrl }.
+function encodeCanvas(c) {
+ const pUrl = c.toDataURL('image/png');
+ const pB64 = pUrl.split(',')[1];
+ if (pB64.length <= CONFIG.MAX_BASE64) return { b64: pB64, type: 'image/png', w: c.width, h: c.height, dataUrl: pUrl };
+ for (let q = 0.96; q >= 0.18; q -= 0.04) {
+ const jUrl = c.toDataURL('image/jpeg', q);
+ const b64 = jUrl.split(',')[1];
+ if (b64.length <= CONFIG.MAX_BASE64) return { b64, type: 'image/jpeg', w: c.width, h: c.height, dataUrl: jUrl };
+ }
+ throw new Error('Could not compress image small enough');
+}
+
+// Render a (possibly cropped, possibly rotated) region of `img` to a canvas
+// sized so its bounding box fits within `maxDim`. Returns the encoded result.
+// crop = {x, y, w, h} in source pixels; pass null for the full image.
+// rotation = degrees CLOCKWISE applied around the crop's center.
+function renderRegion(img, natW, natH, crop, filterCss, maxDim, rotation = 0) {
+ const sx = crop ? crop.x : 0;
+ const sy = crop ? crop.y : 0;
+ const sw = crop ? crop.w : natW;
+ const sh = crop ? crop.h : natH;
+ const rad = (((rotation % 360) + 360) % 360) * Math.PI / 180;
+ const cosT = Math.abs(Math.cos(rad));
+ const sinT = Math.abs(Math.sin(rad));
+ const outW = sw * cosT + sh * sinT;
+ const outH = sw * sinT + sh * cosT;
+ let tw = Math.round(outW), th = Math.round(outH);
+ if (Math.max(tw, th) > maxDim) {
+ const s = maxDim / Math.max(tw, th);
+ tw = Math.round(tw * s);
+ th = Math.round(th * s);
+ }
+ const c = document.createElement('canvas');
+ c.width = tw; c.height = th;
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ if (filterCss) cx.filter = filterCss;
+ const scale = Math.min(tw / outW, th / outH);
+ const drawW = sw * scale, drawH = sh * scale;
+ cx.save();
+ cx.translate(tw/2, th/2);
+ if (rad) cx.rotate(rad);
+ cx.drawImage(img, sx, sy, sw, sh, -drawW/2, -drawH/2, drawW, drawH);
+ cx.restore();
+ cx.filter = 'none';
+ return encodeCanvas(c);
+}
+
+// Render a tight rectangular crop centered on (centerX, centerY) in `img`,
+// with rotation applied. Output is exactly srcW × srcH in source pixel units
+// (scaled to fit maxDim), axis-aligned. Use AFTER computing deskew rotation
+// to get a clean device-shaped output without empty corners.
+function renderDeskewed(img, centerX, centerY, srcW, srcH, rotation, filterCss, maxDim) {
+ let tw = srcW, th = srcH;
+ if (Math.max(tw, th) > maxDim) {
+ const s = maxDim / Math.max(tw, th);
+ tw = Math.round(tw * s);
+ th = Math.round(th * s);
+ }
+ const scale = tw / srcW;
+ const c = document.createElement('canvas');
+ c.width = tw; c.height = th;
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ if (filterCss) cx.filter = filterCss;
+ cx.save();
+ cx.translate(tw / 2, th / 2);
+ if (rotation) cx.rotate(rotation * Math.PI / 180);
+ cx.scale(scale, scale);
+ cx.drawImage(img, -centerX, -centerY);
+ cx.restore();
+ cx.filter = 'none';
+ return encodeCanvas(c);
+}
+
+// ─── OCR PIPELINE STAGES ─────────────────────────────────────────────────────
+// Pass 1: ask Opus where the LCD is. Returns {x, y, w, h, observations} in
+// percent coordinates of the preview image, or null if the call/parse fails.
+async function detectLcdBbox(apiKey, preview, signal) {
+ const data = await callClaude(apiKey, {
+ model: CONFIG.CLAUDE_MODEL,
+ max_tokens: 500,
+ tools: [{
+ name: 'report_lcd_bbox',
+ description: 'Report the axis-aligned bounding box of the LCD/digital display screen on the blood pressure monitor.',
+ input_schema: {
+ type: 'object',
+ properties: {
+ observations: { type: 'string', description: 'Briefly describe where you see the LCD glass area on the device — its approximate location, size, and any tilt/rotation. 1-2 sentences.' },
+ x: { type: 'number', description: 'Left edge of LCD bounding box, as percentage of image width (0-100).' },
+ y: { type: 'number', description: 'Top edge of LCD bounding box, as percentage of image height (0-100).' },
+ w: { type: 'number', description: 'Width of LCD bounding box, as percentage of image width (0-100).' },
+ h: { type: 'number', description: 'Height of LCD bounding box, as percentage of image height (0-100).' }
+ },
+ required: ['observations', 'x', 'y', 'w', 'h']
+ }
+ }],
+ tool_choice: { type: 'tool', name: 'report_lcd_bbox' },
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
+ { type: 'text', text: 'Identify the LCD screen on this blood pressure monitor — the rectangular display area where the digital readout (systolic/diastolic/pulse numbers) appears.\n\nIMPORTANT:\n- Capture ONLY the LCD glass area itself (dark/grey for most devices, or blue-backlit for iHealth-type devices). The LCD glass is the inset display panel.\n- EXCLUDE the white/silver plastic bezel and device casing around the LCD.\n- EXCLUDE side labels printed on the bezel (SYS, DIA, PUL/PULSE, mmHg, M/D, MEM, H/M).\n- EXCLUDE physical buttons (ON/OFF, MEM, SET, START/STOP, M1, M2).\n- If the device is tilted in the photo, return the smallest axis-aligned bounding box that fully contains the tilted LCD glass.\n- The bbox should be TIGHT — the LCD glass should fill almost the entire bounding box.' }
+ ]
+ }]
+ }, signal);
+ const toolUse = data.content?.find(b => b.type === 'tool_use');
+ if (!toolUse?.input) return null;
+ const box = toolUse.input;
+ if (box.x == null || box.y == null || box.w == null || box.h == null) return null;
+ return box;
+}
+
+// Pass 1.5: ask Opus which cardinal rotation (0/90/180/270 CW) makes the
+// device upright. Returns the integer degrees, or 0 if it can't decide.
+async function detectCardinalOrientation(apiKey, encoded, signal) {
+ const data = await callClaude(apiKey, {
+ model: CONFIG.CLAUDE_MODEL,
+ max_tokens: 300,
+ system: 'You determine the cardinal rotation needed for a blood pressure monitor LCD photo so the device appears upright.\n\n' +
+ 'Cues for finding "up" on a BP monitor:\n' +
+ '1. Section labels: "SYS" or "SYSTOLIC" is at the TOP of the LCD when upright. "DIA" or "DIASTOLIC" is in the MIDDLE. "PUL", "PULSE", or "BPM" is at the BOTTOM.\n' +
+ '2. Numbers arrangement: When upright, the SYS number (largest, typically 90-200) is at the TOP, the DIA number (typically 50-130) is in the MIDDLE, the pulse number (typically 40-150) is at the BOTTOM.\n' +
+ '3. Brand name: "Omron", "iHealth", "Generation Guard", etc. reads horizontally (left-to-right) when upright.\n' +
+ '4. Physical buttons on the device body are at the BOTTOM when upright.\n' +
+ '5. Time of day / battery / mmHg unit indicators read horizontally when upright.\n\n' +
+ 'Call the set_rotation tool with your observations and answer. The rotation must be one of: 0 (already upright), 90 (image needs 90° CW rotation: currently the top of the device points LEFT in the image), 180 (image is upside down), 270 (image needs 90° CCW rotation, i.e., 270° CW: currently the top of the device points RIGHT in the image).',
+ tools: [{
+ name: 'set_rotation',
+ description: 'Report the cardinal rotation needed to make the LCD upright.',
+ input_schema: {
+ type: 'object',
+ properties: {
+ observations: { type: 'string', description: 'In one sentence, name 1-2 specific orientation cues you can see (e.g., "SYS label is on the right side of the LCD" or "Brand name reads top-to-bottom"). Then state which direction is UP in the current image.' },
+ rotation_cw_degrees: { type: 'integer', enum: [0, 90, 180, 270], description: 'Cardinal CW rotation in degrees needed to make the LCD upright. Choose exactly one of: 0, 90, 180, 270.' }
+ },
+ required: ['observations', 'rotation_cw_degrees']
+ }
+ }],
+ tool_choice: { type: 'tool', name: 'set_rotation' },
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: encoded.type, data: encoded.b64 } },
+ { type: 'text', text: 'What cardinal rotation is needed to make this BP monitor LCD appear upright? Use the orientation cues to identify which side is naturally UP.' }
+ ]
+ }]
+ }, signal);
+ const tool = data.content?.find(b => b.type === 'tool_use' && b.name === 'set_rotation');
+ if (!tool?.input) return { rotation_cw_degrees: 0, observations: 'no tool_use block' };
+ return tool.input;
+}
+
+// Pass 2: send the deskewed/cropped image to Opus and parse the BP reading.
+// Returns {systolic, diastolic, bpm, device}, any value may be null.
+async function extractReading(apiKey, encoded, signal) {
+ const data = await callClaude(apiKey, {
+ model: CONFIG.CLAUDE_MODEL,
+ max_tokens: 200,
+ system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: encoded.type, data: encoded.b64 } },
+ { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.' }
+ ]
+ }]
+ }, signal);
+ const text = data.content?.find(b => b.type === 'text')?.text || '';
+ const m = text.match(/\{[\s\S]*?\}/);
+ if (!m) throw new Error('No JSON found. Claude said: "' + text.slice(0, 300) + '"');
+ return JSON.parse(m[0]);
+}
+
+// Geometric recovery of the LCD's actual (axis-aligned, post-deskew) dimensions
+// from its source bounding box and the deskew angle. The formula is the inverse
+// of bbox = (W·|cosθ| + H·|sinθ|, W·|sinθ| + H·|cosθ|) for a rotated rectangle.
+// When the math gives unreliable results (typically when edge detection
+// over-estimated the rotation), returns the bbox dims with usedFallback=true.
+function computeActualLcdDims(bboxW, bboxH, deskewDeg) {
+ const absD = Math.abs(deskewDeg);
+ if (absD < 1) return { w: bboxW, h: bboxH, usedFallback: false };
+ if (absD >= 44) return { w: bboxW, h: bboxH, usedFallback: true };
+ const cosD = Math.cos(absD * Math.PI / 180);
+ const sinD = Math.sin(absD * Math.PI / 180);
+ const cos2D = cosD * cosD - sinD * sinD;
+ if (cos2D <= 0.05) return { w: bboxW, h: bboxH, usedFallback: true };
+ const aw = (bboxW * cosD - bboxH * sinD) / cos2D;
+ const ah = (bboxH * cosD - bboxW * sinD) / cos2D;
+ // Sanity-check: positive, smaller than bbox in each dim, not absurdly skewed.
+ if (aw > 0 && ah > 0 && aw <= bboxW && ah <= bboxH &&
+ aw >= bboxW * 0.3 && ah >= bboxH * 0.3) {
+ return { w: aw, h: ah, usedFallback: false };
+ }
+ return { w: bboxW, h: bboxH, usedFallback: true };
+}
+
+// Init API key button state on load
+document.addEventListener('DOMContentLoaded', updateApiKeyBtn);
+setTimeout(updateApiKeyBtn, 100);
+
+// ─── FILE HANDLING & CLAUDE VISION ───────────────────────────────────────────
+// Top-level entry: validate files, queue items, dispatch each to processOcrFile.
+async function handleFiles(files) {
+ const apiKey = getApiKey();
+ if (!apiKey) {
+ toast('Please add your Anthropic API key first — tap ⚙ API Key in the header.', 'warning');
+ return;
+ }
+ if (!apiKey.startsWith('sk-ant-')) {
+ toast('API key doesn\'t look right — it should start with sk-ant-. Check your key in ⚙ API Key.', 'warning');
+ return;
+ }
+ if (window.location.protocol === 'file:') {
+ toast('API calls are blocked when opening this file directly in Chrome. Use a hosted URL (e.g. GitHub Pages) or run a local server (python3 -m http.server, then open http://localhost:8000/pulse.html).', 'error', 12000);
+ return;
+ }
+ const allowed = ['image/png','image/jpeg','image/jpg','image/heic'];
+ const all = Array.from(files);
+ const list = all.filter(f =>
+ allowed.includes(f.type.toLowerCase()) || f.name.toLowerCase().endsWith('.heic')
+ );
+ const rejected = all.filter(f => !list.includes(f));
+ if (rejected.length) {
+ const names = rejected.map(f => f.name).join(', ');
+ toast('Unsupported file type' + (rejected.length > 1 ? 's' : '') + ': ' + names +
+ '. Supported: PNG, JPG, JPEG, HEIC.', 'warning');
+ }
+ if (list.length === 0) return;
+ const toProcess = list.slice(0, CONFIG.MAX_FILES_PER_BATCH);
+
+ // Add all items to the queue up front so the user sees them as spinners
+ // immediately, in submission order. Then dispatch work to a small pool of
+ // workers — each pulls the next item until the shared queue is empty.
+ const work = toProcess.map(file => ({
+ file,
+ item: { qid: genId(), file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' },
+ }));
+ work.forEach(w => ocrQueue.push(w.item));
+ renderOCRQueue();
+
+ const concurrency = Math.min(CONFIG.OCR_CONCURRENCY, work.length);
+ const queue = work.slice();
+ async function worker() {
+ while (queue.length > 0) {
+ const w = queue.shift();
+ try {
+ await processOcrFile(w.item, w.file, apiKey);
+ } catch (e) {
+ // processOcrFile already records errors on the item; this catches any
+ // unhandled rejection so other workers keep going.
+ console.error('Pulse: unexpected processOcrFile rejection:', e);
+ }
+ renderOCRQueue();
+ }
+ }
+ await Promise.all(Array.from({ length: concurrency }, worker));
+}
+
+// ─── OCR PIPELINE ORCHESTRATION ──────────────────────────────────────────────
+// Loads the image with the overall timeout race. Throws on failure or timeout.
+async function loadImageWithTimeout(file) {
+ const timeoutPromise = new Promise((_, rej) =>
+ setTimeout(() => rej(new Error('Image processing timed out. For HEIC files, please convert to JPG first (on iPhone: Settings → Camera → Formats → Most Compatible).')), CONFIG.IMAGE_LOAD_TIMEOUT_MS)
+ );
+ const { img } = await Promise.race([loadImage(file), timeoutPromise]);
+ return img;
+}
+
+// Builds a cheap fallback thumbnail and stores it on the item.
+// Used only if the deskewed crop later fails; otherwise the deskewed crop
+// overrides this thumb. Leaves item.thumbReady=false so the spinner keeps
+// showing until the device-shaped thumb is ready.
+function buildFallbackThumb(item, img) {
+ const natW = img.naturalWidth, natH = img.naturalHeight;
+ const c = document.createElement('canvas');
+ const scale = Math.min(1, CONFIG.THUMB_FALLBACK_MAX_DIM / Math.max(natW, natH));
+ c.width = Math.round(natW * scale);
+ c.height = Math.round(natH * scale);
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ cx.drawImage(img, 0, 0, c.width, c.height);
+ item.thumb = c.toDataURL('image/jpeg', 0.75);
+}
+
+// Runs Pass 1 (Opus bbox) + edge-detection rotation + cardinal orientation
+// + LCD-shape math + thumb regeneration. Returns { crop, rotation } so Pass 2
+// can re-render at OCR resolution. crop may be null if bbox detection failed,
+// in which case Pass 2 will use the full image. Mutates item: item._deskew and
+// item.thumb may be updated.
+async function runBboxPipeline(item, img, apiKey, signal) {
+ const natW = img.naturalWidth, natH = img.naturalHeight;
+ let crop = null;
+ let rotation = 0;
+
+ const preview = renderRegion(img, natW, natH, null, null, CONFIG.BBOX_PREVIEW_MAX_DIM);
+ console.log('Pulse: Pass 1 — detecting LCD bbox with Opus 4.7');
+ const box = await detectLcdBbox(apiKey, preview, signal);
+ if (!box) return { crop, rotation };
+
+ console.log('Pulse: Opus bbox observations:', box.observations);
+ console.log('Pulse: Opus bbox raw:', JSON.stringify({x:box.x, y:box.y, w:box.w, h:box.h}));
+
+ // Pad bbox by BBOX_PADDING_PCT each side and convert to source pixels
+ const padX = box.w * CONFIG.BBOX_PADDING_PCT;
+ const padY = box.h * CONFIG.BBOX_PADDING_PCT;
+ const x1 = Math.max(0, box.x - padX) / 100 * natW;
+ const y1 = Math.max(0, box.y - padY) / 100 * natH;
+ const x2 = Math.min(100, box.x + box.w + padX) / 100 * natW;
+ const y2 = Math.min(100, box.y + box.h + padY) / 100 * natH;
+ crop = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
+ console.log('Pulse: LCD bbox + ' + Math.round(CONFIG.BBOX_PADDING_PCT * 100) + '% padding: ' +
+ crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
+ ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image)');
+
+ // Edge-detection rotation on the padded crop
+ try {
+ const edgeCanvas = document.createElement('canvas');
+ const scale = Math.min(1, CONFIG.EDGE_DETECT_MAX_DIM / Math.max(crop.w, crop.h));
+ edgeCanvas.width = Math.round(crop.w * scale);
+ edgeCanvas.height = Math.round(crop.h * scale);
+ const ectx = edgeCanvas.getContext('2d');
+ ectx.imageSmoothingQuality = 'high';
+ ectx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, edgeCanvas.width, edgeCanvas.height);
+ rotation = detectRotationFromEdges(edgeCanvas);
+ } catch(e) { console.log('Pulse: edge detection failed, rotation=0:', e.message); rotation = 0; }
+
+ // Save the deskew rotation BEFORE the cardinal check adds 0/90/180/270 —
+ // we need it for the actualLCD math below.
+ const deskewRotation = rotation;
+ const lcdCenterX = (box.x + box.w/2) / 100 * natW;
+ const lcdCenterY = (box.y + box.h/2) / 100 * natH;
+ const lcdW_px = box.w / 100 * natW;
+ const lcdH_px = box.h / 100 * natH;
+
+ try {
+ const previewW = lcdW_px * CONFIG.PAD_MULT_NORMAL;
+ const previewH = lcdH_px * CONFIG.PAD_MULT_NORMAL;
+ const cardinalPreview = renderDeskewed(img, lcdCenterX, lcdCenterY, previewW, previewH, rotation, null, CONFIG.CARDINAL_PREVIEW_MAX_DIM);
+ console.log('Pulse: cardinal check — asking Opus for orientation correction (tool_use)');
+ const cardinal = await detectCardinalOrientation(apiKey, cardinalPreview, signal);
+ console.log('Pulse: cardinal observations:', cardinal.observations);
+ console.log('Pulse: cardinal rotation_cw_degrees:', cardinal.rotation_cw_degrees);
+ if ([90, 180, 270].includes(cardinal.rotation_cw_degrees)) {
+ const before = rotation;
+ rotation += cardinal.rotation_cw_degrees;
+ console.log('Pulse: cardinal correction +' + cardinal.rotation_cw_degrees + '°, total rotation=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
+ } else {
+ console.log('Pulse: cardinal check says no additional rotation needed');
+ }
+ } catch(e) { console.log('Pulse: cardinal check failed, keeping edge-detection rotation:', e.message); }
+
+ // Recover actual LCD dims (post-deskew, axis-aligned) from bbox + deskew angle
+ const lcd = computeActualLcdDims(lcdW_px, lcdH_px, deskewRotation);
+ if (lcd.usedFallback) {
+ console.log('Pulse: actual LCD calc gave unreliable result (rotation likely over-estimated); using bbox dims with reduced padding');
+ } else if (Math.abs(deskewRotation) >= 1) {
+ console.log('Pulse: actual LCD dims (post-deskew): ' + Math.round(lcd.w) + 'x' + Math.round(lcd.h) + ' (vs source bbox ' + Math.round(lcdW_px) + 'x' + Math.round(lcdH_px) + ')');
+ }
+
+ // Smaller padding when we're using bbox-fallback (bbox already includes rotation slack)
+ const padMul = lcd.usedFallback ? CONFIG.PAD_MULT_FALLBACK : CONFIG.PAD_MULT_NORMAL;
+ const totalRotMod = ((rotation % 360) + 360) % 360;
+ const swap = (totalRotMod >= 45 && totalRotMod < 135) || (totalRotMod >= 225 && totalRotMod < 315);
+ const outSrcW = (swap ? lcd.h : lcd.w) * padMul;
+ const outSrcH = (swap ? lcd.w : lcd.h) * padMul;
+ if (swap) console.log('Pulse: dimensions swapped for cardinal rotation (device was sideways)');
+ console.log('Pulse: output canvas (LCD * ' + padMul + ' with ' + Math.round((padMul-1)*50) + '% padding each side): ' + Math.round(outSrcW) + 'x' + Math.round(outSrcH));
+
+ // Regenerate thumb with the deskewed crop
+ try {
+ const cropped = renderDeskewed(img, lcdCenterX, lcdCenterY, outSrcW, outSrcH, rotation, null, CONFIG.THUMB_DESKEWED_MAX_DIM);
+ item.thumb = cropped.dataUrl;
+ item.thumbReady = true;
+ renderOCRQueue();
+ } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
+
+ item._deskew = { cx: lcdCenterX, cy: lcdCenterY, w: outSrcW, h: outSrcH };
+ return { crop, rotation };
+}
+
+// Pass 2: Run OCR with grayscale preprocessing. If any value comes back null,
+// retry with original colors and merge. Returns the parsed reading.
+async function runOcrPass(item, img, crop, rotation, apiKey, signal) {
+ const natW = img.naturalWidth, natH = img.naturalHeight;
+ console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (item._deskew ? ' (deskewed device-shaped crop)' : ' (full)') + (rotation ? ', rotation=' + rotation + '°' : ''));
+
+ const renderForOCR = (filter) => item._deskew
+ ? renderDeskewed(img, item._deskew.cx, item._deskew.cy, item._deskew.w, item._deskew.h, rotation, filter, CONFIG.OPUS_MAX_DIM)
+ : renderRegion(img, natW, natH, crop, filter, CONFIG.OPUS_MAX_DIM, rotation);
+
+ const encoded = renderForOCR('grayscale(1) contrast(1.5) brightness(1.05)');
+ console.log('Pulse: attempt 1 — ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
+ let parsed = await extractReading(apiKey, encoded, signal);
+
+ if (parsed.systolic == null || parsed.diastolic == null || parsed.bpm == null) {
+ console.log('Pulse: null value detected, retrying without preprocessing (original colors)');
+ const encoded2 = renderForOCR(null);
+ console.log('Pulse: attempt 2 — ' + (encoded2.b64.length/1e6).toFixed(1) + 'MB ' + encoded2.type + ' at ' + encoded2.w + 'x' + encoded2.h);
+ const retry = await extractReading(apiKey, encoded2, signal);
+ parsed = {
+ systolic: parsed.systolic != null ? parsed.systolic : retry.systolic,
+ diastolic: parsed.diastolic != null ? parsed.diastolic : retry.diastolic,
+ bpm: parsed.bpm != null ? parsed.bpm : retry.bpm,
+ device: parsed.device || retry.device,
+ };
+ }
+ return parsed;
+}
+
+// Top-level per-file orchestration. Handles EXIF date, image loading, the
+// bbox pipeline, OCR, and error UX. Each file gets its own AbortController
+// so removeOCRItem can cancel in-flight requests. The controller is also
+// in the global _inflightAborts set so tab close aborts everything.
+async function processOcrFile(item, file, apiKey) {
+ const ctrl = new AbortController();
+ item._abort = ctrl;
+ _inflightAborts.add(ctrl);
+ const signal = ctrl.signal;
+ try {
+ const exifDt = await getExifDate(file);
+ item.dt = exifDt || nowLocalISO();
+
+ const img = await loadImageWithTimeout(file);
+ buildFallbackThumb(item, img);
+
+ let crop = null, rotation = 0;
+ try {
+ const stage = await runBboxPipeline(item, img, apiKey, signal);
+ crop = stage.crop;
+ rotation = stage.rotation;
+ } catch (e) {
+ if (e.name === 'AbortError') throw e;
+ console.log('Pulse: bbox detection failed, will use full image:', e.message);
+ }
+
+ const parsed = await runOcrPass(item, img, crop, rotation, apiKey, signal);
+
+ item.sys = parsed.systolic != null ? String(parsed.systolic) : '';
+ item.dia = parsed.diastolic != null ? String(parsed.diastolic) : '';
+ item.bpm = parsed.bpm != null ? String(parsed.bpm) : '';
+ item.device = parsed.device || '';
+ item.status = 'ready';
+ item.thumbReady = true;
+ } catch(e) {
+ if (e.name === 'AbortError') {
+ // Item was removed mid-processing — nothing to surface
+ console.log('Pulse: processing aborted for', file?.name);
+ return;
+ }
+ item.status = 'error';
+ item.thumbReady = true;
+ console.error('Pulse error:', e);
+ if (e.message === 'Failed to fetch' || (e.name === 'TypeError' && !e.message.includes('API'))) {
+ const isFile = window.location.protocol === 'file:';
+ item.errorMsg = isFile
+ ? 'Cannot call API from a local file — host this page or use a local server.'
+ : 'Network error — check console (F12). Possible: invalid API key, ad blocker, or blocked request.';
+ } else {
+ item.errorMsg = e.message || 'Unknown error';
+ }
+ } finally {
+ _inflightAborts.delete(ctrl);
+ if (item._abort === ctrl) delete item._abort;
+ }
+}
+
+
+function fileToBase64(file) {
+ return new Promise((resolve, reject) => {
+ const reader = new FileReader();
+ reader.onload = e => resolve(e.target.result.split(',')[1]);
+ reader.onerror = reject;
+ reader.readAsDataURL(file);
+ });
+}
+
+async function loadImage(file) {
+ const type = file.type.toLowerCase();
+ const name = file.name.toLowerCase();
+ const isHeic = type === 'image/heic' || type === 'image/heif' || (type === '' && name.endsWith('.heic')) || name.endsWith('.heic');
+
+ // Read file as data URL
+ const rawDataUrl = await new Promise((res, rej) => {
+ const r = new FileReader();
+ r.onload = () => res(r.result);
+ r.onerror = () => rej(new Error('Failed to read file'));
+ r.readAsDataURL(file);
+ });
+
+ // Try native decode (works for JPG/PNG always, HEIC on Safari)
+ // Chrome may hang on HEIC data URLs (no onload or onerror), so add timeout
+ let dataUrl = rawDataUrl;
+ let img = await new Promise((resolve) => {
+ const i = new Image();
+ const timer = setTimeout(() => { console.log('Pulse: native decode timed out'); resolve(null); }, CONFIG.NATIVE_DECODE_TIMEOUT_MS);
+ i.onload = () => { clearTimeout(timer); resolve(i); };
+ i.onerror = () => { clearTimeout(timer); resolve(null); };
+ i.src = rawDataUrl;
+ });
+
+ // If native failed and it's HEIC, try HeicTo library
+ if (!img && isHeic) {
+ console.log('Pulse: native HEIC failed, trying HeicTo library...');
+ if (typeof HeicTo === 'undefined') {
+ throw new Error('HEIC library not loaded — convert to JPG before uploading, or check internet connection.');
+ }
+ let blob = await Promise.race([
+ HeicTo({ blob: file, type: 'image/jpeg', quality: 0.92 }),
+ new Promise((_, rej) => setTimeout(() => rej(new Error(
+ 'HEIC conversion timed out (' + Math.round(CONFIG.HEIC_CONVERT_TIMEOUT_MS / 1000) + 's). Please convert to JPG before uploading.'
+ )), CONFIG.HEIC_CONVERT_TIMEOUT_MS))
+ ]);
+ if (Array.isArray(blob)) blob = blob[0];
+ if (!blob || !blob.size) throw new Error('HEIC conversion produced empty result');
+ if (blob.size < 1000) throw new Error('HEIC conversion produced suspiciously small blob (' + blob.size + ' bytes) — possibly corrupted');
+ console.log('Pulse: HeicTo done, ' + (blob.size/1e6).toFixed(1) + 'MB');
+ dataUrl = await new Promise((res, rej) => {
+ const r = new FileReader();
+ r.onload = () => res(r.result);
+ r.onerror = () => rej(new Error('Failed to read converted HEIC'));
+ r.readAsDataURL(blob);
+ });
+ img = await new Promise((resolve, reject) => {
+ const i = new Image();
+ const timer = setTimeout(() => reject(new Error('Converted HEIC image load timed out after ' + Math.round(CONFIG.CONVERTED_HEIC_LOAD_TIMEOUT_MS / 1000) + 's')), CONFIG.CONVERTED_HEIC_LOAD_TIMEOUT_MS);
+ i.onload = () => { clearTimeout(timer); resolve(i); };
+ i.onerror = () => { clearTimeout(timer); reject(new Error('Converted HEIC could not be loaded')); };
+ i.src = dataUrl;
+ });
+ if (!img.naturalWidth || !img.naturalHeight) {
+ throw new Error('Converted HEIC has zero dimensions — conversion may have failed silently');
+ }
+ console.log('Pulse: HEIC image loaded ' + img.naturalWidth + 'x' + img.naturalHeight);
+ } else if (!img) {
+ throw new Error('Could not decode image');
+ }
+
+ return { img, dataUrl };
+}
+
+async function getExifDate(file) {
+ try {
+ const exif = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate', 'DateTime']);
+ const dt = exif?.DateTimeOriginal || exif?.CreateDate || exif?.DateTime;
+ if (!dt) return null;
+ // dt is a JS Date object from exifr
+ const d = new Date(dt);
+ if (isNaN(d)) return null;
+ const pad = n => String(n).padStart(2,'0');
+ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+ } catch(e) {
+ return null;
+ }
+}
+
+function renderOCRQueue() {
+ const container = document.getElementById('ocrQueue');
+ const bar = document.getElementById('commitAllBar');
+ const countEl = document.getElementById('queueCount');
+
+ // Keep entry accordion open while queue has pending items
+ setEntryAccordion();
+
+ if (ocrQueue.length === 0) {
+ container.innerHTML = '';
+ bar.style.display = 'none';
+ return;
+ }
+
+ container.innerHTML = ocrQueue.map(item => {
+ const dupCheck = checkDuplicate(item.dt);
+ const isWarn = dupCheck && item.status === 'ready';
+ const parts = splitDT(item.dt);
+ // Escape everything that originates from outside our code: filenames, OCR-returned
+ // device strings, user-typed notes, sys/dia/bpm values (already numeric in the
+ // common case but the user can type free text into the field), and error messages.
+ const filename = escapeHtml(item.file?.name || 'Image');
+ return `
+ <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
+ <div class="ocr-thumb-wrap">
+ ${item.thumbReady && item.thumb
+ ? `<img src="${item.thumb}" alt="${filename}" />`
+ : `<div class="thumb-placeholder">
+ <div class="spinner-lg"></div>
+ <span>${item.status === 'error' ? 'No preview' : 'Processing…'}</span>
+ </div>`}
+ </div>
+ <div class="ocr-body">
+ ${item.status === 'ready' ? `
+ <div class="ocr-grid">
+ <div class="ocr-filename">📋 <span>${filename}</span></div>
+ <div class="ocr-field ocr-col-date"><label>Date</label><input type="date" class="dt-input" value="${escapeHtml(parts.d)}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
+ <div class="ocr-field ocr-col-time"><label>Time</label><input type="time" class="dt-input" value="${escapeHtml(parts.t)}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
+ <div class="ocr-row-meas">
+ <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" list="deviceOptions" value="${escapeHtml(item.device || '')}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
+ <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" value="${escapeHtml(item.sys)}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" value="${escapeHtml(item.dia)}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" value="${escapeHtml(item.bpm)}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
+ </div>
+ <div class="ocr-row-bottom">
+ <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${escapeHtml(item.notes)}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+ <div class="ocr-actions">
+ <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Save</button>
+ <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
+ </div>
+ </div>
+ </div>
+ ` : `
+ <div class="ocr-header-row">
+ <div class="ocr-filename">
+ 📋 <span>${filename}</span>
+ </div>
+ </div>
+ ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
+ ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${escapeHtml(item.errorMsg || 'Failed to parse image')}</div>` : ''}
+ <div class="ocr-actions-fallback">
+ <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
+ </div>
+ `}
+ ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — saving will override it.</div>` : ''}
+ </div>
+ </div>`;
+ }).join('');
+
+ const ready = ocrQueue.filter(i => i.status === 'ready').length;
+ if (ready > 0) {
+ bar.style.display = 'flex';
+ countEl.textContent = `${ready} item${ready !== 1 ? 's' : ''} ready to save`;
+ } else {
+ bar.style.display = 'none';
+ }
+}
+
+function updateOCR(qid, field, val) {
+ const item = ocrQueue.find(i => i.qid === qid);
+ if (!item) return;
+ if (field === 'd' || field === 't') {
+ // Combine the new date/time part with the existing other part
+ const parts = splitDT(item.dt);
+ if (field === 'd') parts.d = val; else parts.t = val;
+ const combined = combineDT(parts.d, parts.t);
+ if (combined) item.dt = combined;
+ } else {
+ item[field] = val;
+ }
+}
+
+function removeOCRItem(qid) {
+ const item = ocrQueue.find(i => i.qid === qid);
+ if (item && item._abort) { try { item._abort.abort(); } catch(e) {} }
+ ocrQueue = ocrQueue.filter(i => i.qid !== qid);
+ renderOCRQueue();
+}
+
+function commitItem(qid) {
+ const item = ocrQueue.find(i => i.qid === qid);
+ if (!item) return;
+ if (!item.sys || !item.dia) { toast('Please enter at least systolic and diastolic values.', 'warning'); return; }
+ saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
+ ocrQueue = ocrQueue.filter(i => i.qid !== qid);
+ renderOCRQueue();
+ renderData();
+}
+
+function commitAll() {
+ const ready = ocrQueue.filter(i => i.status === 'ready');
+ ready.forEach(item => {
+ if (item.sys && item.dia) {
+ saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
+ }
+ });
+ ocrQueue = ocrQueue.filter(i => i.status !== 'ready');
+ renderOCRQueue();
+ renderData();
+}
+
+// ─── MANUAL ENTRY ─────────────────────────────────────────────────────────────
+function submitManual() {
+ const sys = +document.getElementById('m-sys').value;
+ const dia = +document.getElementById('m-dia').value;
+ const bpm = +document.getElementById('m-bpm').value || null;
+ const device = document.getElementById('m-device').value.trim();
+ const d = document.getElementById('m-d').value;
+ const t = document.getElementById('m-t').value;
+ const dt = combineDT(d, t);
+ const notes = document.getElementById('m-notes').value.trim();
+ if (!sys || !dia || !dt) { toast('Please enter systolic, diastolic, date, and time.', 'warning'); return; }
+ saveRecord({ sys, dia, bpm, device, dt, notes });
+ clearManualForm();
+ renderData();
+}
+
+// Reset every field in the Manual Entry form: clears Sys/Dia/BPM/Device/Notes
+// and snaps Date+Time back to "right now". Used by both the Clear button and
+// after a successful Save.
+function clearManualForm() {
+ document.getElementById('m-sys').value = '';
+ document.getElementById('m-dia').value = '';
+ document.getElementById('m-bpm').value = '';
+ document.getElementById('m-device').value = '';
+ document.getElementById('m-notes').value = '';
+ const now = splitDT(nowLocalISO());
+ document.getElementById('m-d').value = now.d;
+ document.getElementById('m-t').value = now.t;
+}
+
+function checkDuplicate(dt) {
+ return records.some(r => r.dt === dt);
+}
+
+// Normalize a device name to Title Case while preserving brand-style internal caps
+// like "iHealth" / "eBay". Rule: if a word already contains a lowercase letter
+// immediately followed by an uppercase letter, leave it alone. Otherwise, capitalize
+// the first letter and lowercase the rest.
+function normalizeDeviceName(s) {
+ if (!s) return '';
+ return s.trim().split(/\s+/).map(w => {
+ if (/[a-z][A-Z]/.test(w)) return w; // preserves iHealth, eHealth, BPMonitor, etc.
+ return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+ }).join(' ');
+}
+
+// Rebuild the <datalist> of device suggestions from current records.
+// Dedupes case-insensitively, keeping the first-seen (already-normalized) spelling.
+function updateDeviceOptions() {
+ const seen = new Map(); // lower-cased -> display
+ records.forEach(r => {
+ const name = (r.device || '').trim();
+ if (!name) return;
+ const key = name.toLowerCase();
+ if (!seen.has(key)) seen.set(key, name);
+ });
+ const sorted = Array.from(seen.values()).sort((a,b) => a.localeCompare(b));
+ const dl = document.getElementById('deviceOptions');
+ if (dl) dl.innerHTML = sorted.map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
+}
+
+function saveRecord({ sys, dia, bpm, device, dt, notes }) {
+ const existing = records.findIndex(r => r.dt === dt);
+ if (existing >= 0) { records.splice(existing, 1); }
+ records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
+ saveData(records);
+ updateDeviceOptions();
+}
+
+// ─── RENDER DATA ──────────────────────────────────────────────────────────────
+function renderData() {
+ setEntryAccordion();
+ const section = document.getElementById('dataSection');
+ if (records.length === 0) {
+ section.innerHTML = '<div class="no-data-msg">No measurements yet — add your first reading above.</div>';
+ return;
+ }
+
+ let filtered = records;
+
+ const avgSys = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.sys, 0) / filtered.length) : '--';
+ const avgDia = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.dia, 0) / filtered.length) : '--';
+ const bpmR = filtered.filter(r => r.bpm);
+ const avgBpm = bpmR.length ? Math.round(bpmR.reduce((s,r) => s+r.bpm, 0) / bpmR.length) : '--';
+ const cat = (typeof avgSys === 'number') ? bpCategory(avgSys, avgDia) : null;
+
+ section.innerHTML = `
+ <div class="stats-row">
+ <div class="stat-card">
+ <div class="stat-label">Avg Systolic</div>
+ <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
+ <svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="var(--c-systolic)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="16 6 16 6 2 6"/></svg>
+ </div>
+ <div class="stat-card">
+ <div class="stat-label">Avg Diastolic</div>
+ <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
+ <svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="var(--c-diastolic)" stroke-width="2.5" stroke-linecap="round"/></svg>
+ </div>
+ <div class="stat-card">
+ <div class="stat-label">Avg Heart Rate</div>
+ <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
+ <svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="var(--c-bpm)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="4 4"/></svg>
+ </div>
+ </div>
+ ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
+
+ <div class="chart-wrap">
+ <div class="chart-inner">
+ <canvas id="bpChart" height="200"></canvas>
+ </div>
+ </div>
+
+ <div style="height:24px"></div>
+
+ <div class="data-table-wrap">
+ <table class="data-table">
+ <thead>
+ <tr>
+ <th class="sortable" onclick="setSort('date')">Date &amp; Time ${sortArrow('date')}</th>
+ <th class="sortable" onclick="setSort('sys')">Systolic ${sortArrow('sys')}</th>
+ <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
+ <th class="sortable" onclick="setSort('bpm')">BPM ${sortArrow('bpm')}</th>
+ <th class="sortable" onclick="setSort('device')">Device ${sortArrow('device')}</th>
+ <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}</th>
+ <th class="sortable" onclick="setSort('category')">Category ${sortArrow('category')}</th>
+ <th></th>
+ </tr>
+ </thead>
+ <tbody id="tableBody"></tbody>
+ </table>
+ </div>
+ `;
+
+ renderChart(filtered);
+ renderTable(filtered);
+}
+
+function setSort(column) {
+ if (currentSort.column === column) {
+ // Toggle direction on same column
+ currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+ } else {
+ // New column: default descending (highest/latest at top — useful for BP data)
+ currentSort.column = column;
+ currentSort.direction = 'desc';
+ }
+ renderData();
+}
+
+function sortArrow(column) {
+ if (currentSort.column !== column) return '<span class="sort-arrow inactive">↕</span>';
+ return currentSort.direction === 'asc'
+ ? '<span class="sort-arrow">↑</span>'
+ : '<span class="sort-arrow">↓</span>';
+}
+
+function renderTable(filtered) {
+ const col = currentSort.column;
+ const dir = currentSort.direction;
+ const catOrder = ['Hypotension','Normal','Elevated','High 1','High 2','Crisis'];
+
+ const sorted = [...filtered].sort((a, b) => {
+ const nullishA = (col === 'bpm' && a.bpm == null) ||
+ ((col === 'device' || col === 'notes') && !a[col]);
+ const nullishB = (col === 'bpm' && b.bpm == null) ||
+ ((col === 'device' || col === 'notes') && !b[col]);
+ if (nullishA && nullishB) return 0;
+ if (nullishA) return 1;
+ if (nullishB) return -1;
+
+ let va, vb;
+ switch (col) {
+ case 'date': va = a.dt; vb = b.dt; break;
+ case 'sys': va = a.sys; vb = b.sys; break;
+ case 'dia': va = a.dia; vb = b.dia; break;
+ case 'bpm': va = a.bpm; vb = b.bpm; break;
+ case 'device': va = (a.device || '').toLowerCase(); vb = (b.device || '').toLowerCase(); break;
+ case 'notes': va = (a.notes || '').toLowerCase(); vb = (b.notes || '').toLowerCase(); break;
+ case 'category':
+ va = catOrder.indexOf(bpCategory(a.sys, a.dia).label);
+ vb = catOrder.indexOf(bpCategory(b.sys, b.dia).label);
+ break;
+ default: va = a.dt; vb = b.dt;
+ }
+ if (va < vb) return dir === 'asc' ? -1 : 1;
+ if (va > vb) return dir === 'asc' ? 1 : -1;
+ return 0;
+ });
+
+ const body = document.getElementById('tableBody');
+ body.innerHTML = sorted.map(r => {
+ const dt = new Date(r.dt);
+ const cat = bpCategory(r.sys, r.dia);
+ const dtStr = dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'}) +
+ ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+ const notesCell = r.notes
+ ? `<button class="act-btn act-notes" onclick="showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
+ : '';
+ return `<tr>
+ <td class="mono">${dtStr}</td>
+ <td class="mono">${r.sys}</td>
+ <td class="mono">${r.dia}</td>
+ <td class="mono">${r.bpm||'—'}</td>
+ <td class="cell-device">${escapeHtml(r.device || '') || '—'}</td>
+ <td class="cell-notes">${notesCell}</td>
+ <td><span class="bp-badge" style="background:${cat.color}22;color:${cat.color}">${cat.label}</span></td>
+ <td><div class="td-actions">
+ <button class="act-btn act-edit" onclick="openEdit('${r.id}')" title="Edit" aria-label="Edit">✎</button>
+ <button class="act-btn act-delete" onclick="deleteRecord('${r.id}')" title="Delete" aria-label="Delete">✕</button>
+ </div></td>
+ </tr>`;
+ }).join('');
+}
+
+function showNotePopup(event, recordId) {
+ event.stopPropagation();
+ const r = records.find(x => x.id === recordId);
+ if (!r) return;
+ const tooltip = document.getElementById('chartTooltip');
+ tooltip.innerHTML = `
+ <div class="tt-meta" style="margin-bottom:6px">Note</div>
+ <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;max-width:320px">${escapeHtml(r.notes||'')}</div>
+ `;
+ tooltip.style.display = 'block';
+ const ttRect = tooltip.getBoundingClientRect();
+ let x = event.clientX + 14;
+ let y = event.clientY + 10;
+ if (x + ttRect.width > window.innerWidth - 8) x = event.clientX - ttRect.width - 14;
+ if (x < 8) x = 8;
+ if (y + ttRect.height > window.innerHeight - 8) y = event.clientY - ttRect.height - 10;
+ if (y < 8) y = 8;
+ tooltip.style.left = x + 'px';
+ tooltip.style.top = y + 'px';
+ scheduleTooltipDismiss();
+}
+
+// ─── CHART ────────────────────────────────────────────────────────────────────
+// Static chart config — only the {data, pointBackgroundColor} fields are
+// computed per render. Lifting these out keeps renderChart compact.
+const CHART_DATASET_DEFAULTS = {
+ systolic: {
+ label: 'Systolic',
+ borderColor: COLORS.systolic,
+ backgroundColor: 'rgba(232,98,74,0.12)',
+ pointRadius: 5,
+ pointHoverRadius: 8,
+ tension: 0.35,
+ fill: true,
+ borderDash: [16, 6, 16, 6, 2, 6],
+ borderCapStyle: 'round',
+ },
+ diastolic: {
+ label: 'Diastolic',
+ borderColor: COLORS.diastolic,
+ backgroundColor: 'rgba(106,184,212,0.07)',
+ pointBackgroundColor: COLORS.diastolic,
+ pointRadius: 4,
+ pointHoverRadius: 7,
+ tension: 0.35,
+ fill: true,
+ },
+ bpm: {
+ label: 'BPM',
+ borderColor: COLORS.bpm,
+ backgroundColor: 'transparent',
+ pointBackgroundColor: COLORS.bpm,
+ pointRadius: 3,
+ pointHoverRadius: 6,
+ tension: 0.35,
+ borderDash: [4, 4],
+ borderCapStyle: 'round',
+ spanGaps: true,
+ },
+};
+
+const CHART_SCALES = {
+ x: { ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+ y: { ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' }, min: 40 },
+};
+
+function renderChart(series) {
+ if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+ const canvas = document.getElementById('bpChart');
+ if (!canvas || series.length === 0) return;
+
+ // Sort newest-first (most recent → least recent, left → right). The line still
+ // connects in time order; only the axis direction is flipped.
+ const points = [...series].sort((a, b) => new Date(b.dt) - new Date(a.dt));
+
+ const wrap = canvas.parentElement.parentElement;
+ const minWidth = Math.max(wrap.clientWidth, points.length * 50);
+ canvas.parentElement.style.width = minWidth + 'px';
+ canvas.style.width = minWidth + 'px';
+ canvas.width = minWidth;
+
+ // Build x-axis labels in MM/DD/YY format. Show each date only on the
+ // leftmost (first-encountered) reading of that day; subsequent readings
+ // on the same date get an empty label to keep the axis uncluttered.
+ let lastDateStr = null;
+ const labels = points.map(r => {
+ const dateStr = new Date(r.dt).toLocaleDateString('en-US', {
+ month: '2-digit', day: '2-digit', year: '2-digit',
+ });
+ if (dateStr === lastDateStr) return '';
+ lastDateStr = dateStr;
+ return dateStr;
+ });
+
+ const datasets = [
+ { ...CHART_DATASET_DEFAULTS.systolic,
+ data: points.map(r => r.sys),
+ pointBackgroundColor: points.map(r => bpCategory(r.sys, r.dia).color) },
+ { ...CHART_DATASET_DEFAULTS.diastolic,
+ data: points.map(r => r.dia) },
+ { ...CHART_DATASET_DEFAULTS.bpm,
+ data: points.map(r => r.bpm || null) },
+ ];
+
+ chartInstance = new Chart(canvas, {
+ type: 'line',
+ data: { labels, datasets },
+ options: {
+ responsive: false,
+ animation: false,
+ interaction: { mode: 'index', intersect: false },
+ plugins: { legend: { display: false }, tooltip: { enabled: false } },
+ scales: CHART_SCALES,
+ onClick(evt) {
+ // intersect:true → only register clicks that land ON a dot. Misses
+ // bubble to the document, where the managed dismiss-handler closes
+ // any open tooltip.
+ const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+ if (!pts.length) return;
+ // Stop the click from bubbling so the previous popup's dismiss-handler
+ // doesn't fire on the same click that's opening a new popup.
+ if (evt.native && evt.native.stopPropagation) evt.native.stopPropagation();
+ const idx = pts[0].index;
+ const r = points[idx];
+ const cat = bpCategory(r.sys, r.dia);
+ const tooltip = document.getElementById('chartTooltip');
+ const dt = new Date(r.dt);
+ tooltip.innerHTML = `
+ <div class="tt-bp" style="color:${cat.color}">${r.sys}/${r.dia}</div>
+ <div class="tt-row"><span style="color:var(--c-systolic)">Systolic</span> <strong>${r.sys}</strong></div>
+ <div class="tt-row"><span style="color:var(--c-diastolic)">Diastolic</span> <strong>${r.dia}</strong></div>
+ ${r.bpm ? `<div class="tt-row"><span style="color:var(--c-bpm)">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
+ <div class="tt-meta" style="margin-top:6px">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+ ${r.notes ? `<div style="margin-top:6px;font-size:12px;color:var(--text2)">${escapeHtml(r.notes)}</div>` : ''}
+ `;
+ tooltip.style.display = 'block';
+ const ttRect = tooltip.getBoundingClientRect();
+ let x = evt.native.clientX + 14;
+ let y = evt.native.clientY - 30;
+ if (x + ttRect.width > window.innerWidth - 8) x = evt.native.clientX - ttRect.width - 14;
+ if (y < 8) y = 8;
+ if (y + ttRect.height > window.innerHeight - 8) y = window.innerHeight - ttRect.height - 8;
+ tooltip.style.left = x + 'px';
+ tooltip.style.top = y + 'px';
+ scheduleTooltipDismiss();
+ },
+ },
+ });
+}
+
+// Single managed dismiss-on-next-click handler shared by the chart popup and
+// the notes popup. Calling scheduleTooltipDismiss() removes any previously-
+// registered handler before scheduling a new one, so we never end up with
+// multiple handlers racing each other. The schedule is deferred one tick so
+// the click that *opens* a popup doesn't immediately close it.
+let _dismissTooltipHandler = null;
+function scheduleTooltipDismiss() {
+ if (_dismissTooltipHandler) {
+ document.removeEventListener('click', _dismissTooltipHandler);
+ _dismissTooltipHandler = null;
+ }
+ setTimeout(() => {
+ _dismissTooltipHandler = () => { _dismissTooltipHandler = null; hideTooltip(); };
+ document.addEventListener('click', _dismissTooltipHandler, { once: true });
+ }, 10);
+}
+
+function hideTooltip() {
+ const el = document.getElementById('chartTooltip');
+ if (el) el.style.display = 'none';
+ if (_dismissTooltipHandler) {
+ document.removeEventListener('click', _dismissTooltipHandler);
+ _dismissTooltipHandler = null;
+ }
+}
+
+// ─── EDIT / DELETE ────────────────────────────────────────────────────────────
+function openEdit(id) {
+ const r = records.find(x => x.id === id);
+ if (!r) return;
+ editingId = id;
+ document.getElementById('e-sys').value = r.sys;
+ document.getElementById('e-dia').value = r.dia;
+ document.getElementById('e-bpm').value = r.bpm || '';
+ document.getElementById('e-device').value = r.device || '';
+ const parts = splitDT(r.dt);
+ document.getElementById('e-d').value = parts.d;
+ document.getElementById('e-t').value = parts.t;
+ document.getElementById('e-notes').value = r.notes || '';
+ document.getElementById('editModal').classList.add('open');
+}
+
+function closeModal() {
+ editingId = null;
+ document.getElementById('editModal').classList.remove('open');
+}
+
+function saveEdit() {
+ const r = records.find(x => x.id === editingId);
+ if (!r) return;
+ r.sys = +document.getElementById('e-sys').value;
+ r.dia = +document.getElementById('e-dia').value;
+ r.bpm = +document.getElementById('e-bpm').value || null;
+ r.device = normalizeDeviceName(document.getElementById('e-device').value);
+ const d = document.getElementById('e-d').value;
+ const t = document.getElementById('e-t').value;
+ const dt = combineDT(d, t);
+ if (!dt) { toast('Please enter both date and time.', 'warning'); return; }
+ r.dt = dt;
+ r.notes = document.getElementById('e-notes').value.trim();
+ saveData(records);
+ updateDeviceOptions();
+ closeModal();
+ renderDataPreserveScroll();
+}
+
+function deleteRecord(id) {
+ if (!confirm('Delete this measurement?')) return;
+ records = records.filter(r => r.id !== id);
+ saveData(records);
+ renderDataPreserveScroll();
+}
+
+// Like renderData() but keeps the data-list scroll position so an edit/delete
+// doesn't snap the user back to the top of a long list.
+function renderDataPreserveScroll() {
+ const oldWrap = document.querySelector('.data-table-wrap');
+ const scrollTop = oldWrap ? oldWrap.scrollTop : 0;
+ renderData();
+ const newWrap = document.querySelector('.data-table-wrap');
+ if (newWrap) newWrap.scrollTop = scrollTop;
+}
+
+// Close modal on overlay click
+document.getElementById('editModal').addEventListener('click', function(e) {
+ if (e.target === this) closeModal();
+});
+
+// ─── EXPORT CSV ───────────────────────────────────────────────────────────────
+function exportCSV() {
+ if (records.length === 0) { toast('No data to export.', 'warning'); return; }
+ const header = ['Date','Time','Systolic','Diastolic','BPM','Device','Category','Notes'];
+ const rows = records.map(r => {
+ const d = new Date(r.dt);
+ const cat = bpCategory(r.sys, r.dia);
+ return [
+ d.toLocaleDateString('en-US'),
+ d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
+ r.sys, r.dia, r.bpm||'',
+ '"' + (r.device||'').replace(/"/g,'""') + '"',
+ cat.label,
+ '"' + (r.notes||'').replace(/"/g,'""') + '"'
+ ].join(',');
+ });
+ const csv = [header.join(','), ...rows].join('\n');
+ const blob = new Blob([csv], { type: 'text/csv' });
+ const url = URL.createObjectURL(blob);
+ const a = document.createElement('a');
+ a.href = url; a.download = 'pulse-bp-data.csv'; a.click();
+ URL.revokeObjectURL(url);
+}
+
+// ─── IMPORT CSV ───────────────────────────────────────────────────────────────
+// Strict format: matches our own export.
+// Columns: Date(M/D/YYYY), Time(h:MM AM/PM), Systolic, Diastolic, BPM, Device, Category, Notes
+// Dedupe key: dt (date+time down to the minute). Existing records win — imported dupes are skipped.
+function triggerImportCSV() {
+ document.getElementById('csvImportInput').click();
+}
+
+function handleCSVImport(e) {
+ const file = e.target.files[0];
+ if (!file) return;
+ const reader = new FileReader();
+ reader.onload = (ev) => {
+ try {
+ const result = importCSVText(ev.target.result);
+ const errCount = result.errors.length;
+ let summary = result.added + ' new record' + (result.added===1?'':'s') +
+ ', ' + result.skipped + ' duplicate' + (result.skipped===1?'':'s') + ' skipped';
+ if (errCount > 0) {
+ // Show first 3 row numbers inline; full detail goes to console.
+ const sampleRows = result.errors.slice(0, 3).map(e => e.row).join(', ');
+ const moreNote = errCount > 3 ? ' …and ' + (errCount - 3) + ' more' : '';
+ summary += ', ' + errCount + ' row' + (errCount===1?'':'s') + ' rejected (row ' + sampleRows + moreNote + ')';
+ console.group('CSV import errors (' + errCount + ' rows)');
+ result.errors.forEach(e => console.log('Row ' + e.row + ': ' + e.reason));
+ console.groupEnd();
+ summary += '. See console for details.';
+ } else {
+ summary += '.';
+ }
+ const kind = errCount > 0 ? 'warning' : (result.added > 0 ? 'success' : 'info');
+ toast('Import complete: ' + summary, kind, errCount > 0 ? 10000 : 5000);
+ } catch(err) {
+ toast('Import failed: ' + err.message, 'error');
+ }
+ // Reset so selecting the same file again re-fires onchange
+ e.target.value = '';
+ };
+ reader.onerror = () => toast('Could not read file.', 'error');
+ reader.readAsText(file);
+}
+
+function importCSVText(text) {
+ const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+ if (lines.length === 0) throw new Error('File is empty.');
+
+ const header = parseCSVLine(lines[0]).map(s => s.trim().toLowerCase());
+ const idx = {
+ date: header.indexOf('date'),
+ time: header.indexOf('time'),
+ sys: header.indexOf('systolic'),
+ dia: header.indexOf('diastolic'),
+ bpm: header.indexOf('bpm'),
+ device: header.indexOf('device'),
+ notes: header.indexOf('notes')
+ };
+ if (idx.date < 0 || idx.time < 0 || idx.sys < 0 || idx.dia < 0) {
+ throw new Error('Header missing required columns (Date, Time, Systolic, Diastolic).');
+ }
+
+ const existingDts = new Set(records.map(r => r.dt));
+ let added = 0, skipped = 0;
+ const errors = []; // { row, reason } — row numbers are 1-based for the user
+ const newRecords = [];
+
+ for (let i = 1; i < lines.length; i++) {
+ const fields = parseCSVLine(lines[i]);
+ const dateStr = (fields[idx.date] || '').trim();
+ const timeStr = (fields[idx.time] || '').trim();
+ const sysStr = (fields[idx.sys] || '').trim();
+ const diaStr = (fields[idx.dia] || '').trim();
+
+ const isoDate = parseStrictDate(dateStr);
+ const isoTime = parseStrictTime(timeStr);
+ const sys = parseInt(sysStr, 10);
+ const dia = parseInt(diaStr, 10);
+
+ // Identify the specific reason rather than dumping every bad row into one bucket.
+ // Reasons accumulate so a row missing both date and systolic shows both.
+ const reasons = [];
+ if (!isoDate) reasons.push('bad date "' + (dateStr || '(empty)') + '" (expect M/D/YYYY)');
+ if (!isoTime) reasons.push('bad time "' + (timeStr || '(empty)') + '" (expect h:MM AM/PM)');
+ if (isNaN(sys)) reasons.push('bad systolic "' + (sysStr || '(empty)') + '"');
+ if (isNaN(dia)) reasons.push('bad diastolic "' + (diaStr || '(empty)') + '"');
+ if (reasons.length) { errors.push({ row: i + 1, reason: reasons.join('; ') }); continue; }
+
+ const dt = isoDate + 'T' + isoTime;
+ if (existingDts.has(dt)) { skipped++; continue; }
+
+ const bpmStr = idx.bpm >= 0 ? (fields[idx.bpm] || '').trim() : '';
+ const bpm = bpmStr ? parseInt(bpmStr, 10) : null;
+ const device = idx.device >= 0 ? normalizeDeviceName(fields[idx.device] || '') : '';
+ const notes = idx.notes >= 0 ? (fields[idx.notes] || '').trim() : '';
+
+ newRecords.push({ id: genId(), sys, dia, bpm: isNaN(bpm) ? null : bpm, device, dt, notes });
+ existingDts.add(dt);
+ added++;
+ }
+
+ if (added > 0) {
+ records.push(...newRecords);
+ saveData(records);
+ updateDeviceOptions();
+ renderData();
+ }
+ return { added, skipped, errors };
+}
+
+// Parse "M/D/YYYY" → "YYYY-MM-DD". Returns null on bad format.
+function parseStrictDate(s) {
+ const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+ if (!m) return null;
+ const mo = parseInt(m[1], 10), day = parseInt(m[2], 10), yr = parseInt(m[3], 10);
+ if (mo < 1 || mo > 12 || day < 1 || day > 31) return null;
+ return yr + '-' + String(mo).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+}
+
+// Parse "h:MM AM/PM" → "HH:MM" (24-hour). Returns null on bad format.
+function parseStrictTime(s) {
+ const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+ if (!m) return null;
+ let hr = parseInt(m[1], 10);
+ const min = parseInt(m[2], 10);
+ const ampm = m[3].toUpperCase();
+ if (hr < 1 || hr > 12 || min < 0 || min > 59) return null;
+ if (ampm === 'AM') hr = (hr === 12) ? 0 : hr;
+ else hr = (hr === 12) ? 12 : hr + 12;
+ return String(hr).padStart(2,'0') + ':' + String(min).padStart(2,'0');
+}
+
+// Simple RFC-4180-ish CSV line parser: handles quoted fields and "" escapes.
+function parseCSVLine(line) {
+ const out = [];
+ let cur = '', inQuote = false;
+ for (let i = 0; i < line.length; i++) {
+ const c = line[i];
+ if (inQuote) {
+ if (c === '"') {
+ if (line[i+1] === '"') { cur += '"'; i++; }
+ else { inQuote = false; }
+ } else cur += c;
+ } else {
+ if (c === ',') { out.push(cur); cur = ''; }
+ else if (c === '"' && cur === '') inQuote = true;
+ else cur += c;
+ }
+ }
+ out.push(cur);
+ return out;
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+setEntryAccordion();
+updateDeviceOptions();
+renderData();
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js"></script>
+</body>
+</html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>BP Pulse — Blood Pressure Tracker</title>
