@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.26 — 2026-06-15 | Removed chart legend (colors covered by Avg stat cards); smaller dot radii (Sys 5, Dia 4, BPM 3); removed Filter Range UI entirely -->
+<!-- Pulse v6.27 — 2026-06-15 | Refactor (high-priority items): single CONFIG block (magic numbers); CSS vars + COLORS const for chart colors; callClaude() helper consolidates 3 duplicated API calls; extracted module-scope OCR helpers (encodeCanvas, renderRegion, renderDeskewed, detectLcdBbox, detectCardinalOrientation, extractReading, computeActualLcdDims); slimmed handleFiles from 470 lines to ~30; behavior unchanged -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -27,6 +27,10 @@
  --orange: #e8924a;
  --red: #e85a4a;
  --purple: #9a6ae8;
+ /* Chart series colors — single source of truth, mirrored in JS as COLORS */
+ --c-systolic: #e8624a;
+ --c-diastolic: #6ab8d4;
+ --c-bpm: #5db87a;
  --radius: 12px;
  --radius-sm: 8px;
  --transition: 0.2s ease;
@@ -961,8 +965,50 @@
 <datalist id="deviceOptions"></datalist>
 
 <script>
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+// All tunable constants in one place. Pixel sizes are in source-image space
+// unless noted otherwise.
+const CONFIG = {
+ // Image / API sizing
+ OPUS_MAX_DIM: 2576, // Opus 4.7 max image dim
+ MAX_BASE64: 5242880 - 50000, // ~5MB API limit with small safety margin
+ // Thumbnail and preview dims
+ THUMB_FALLBACK_MAX_DIM: 240, // queue fallback thumb size
+ THUMB_DESKEWED_MAX_DIM: 360, // post-deskew thumb shown in queue
+ BBOX_PREVIEW_MAX_DIM: 1200, // image sent to Opus for bbox detection
+ CARDINAL_PREVIEW_MAX_DIM: 500, // image sent to Opus for cardinal orientation
+ EDGE_DETECT_MAX_DIM: 800, // canvas size for Sobel edge detection
+ // Timeouts (ms)
+ IMAGE_LOAD_TIMEOUT_MS: 40000,
+ HEIC_CONVERT_TIMEOUT_MS: 30000,
+ NATIVE_DECODE_TIMEOUT_MS: 5000,
+ // OCR pipeline
+ MAX_FILES_PER_BATCH: 10,
+ BBOX_PADDING_PCT: 0.25, // % padding around Opus bbox in source coords
+ PAD_MULT_NORMAL: 1.5, // canvas = LCD × this when actual LCD dims known
+ PAD_MULT_FALLBACK: 1.2, // canvas = bbox × this when math falls back to bbox
+ // Storage
+ STORAGE_KEY: 'pulse_bp_data',
+ API_KEY_STORAGE: 'pulse_anthropic_key',
+ // Anthropic
+ CLAUDE_MODEL: 'claude-opus-4-7',
+ CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
+ CLAUDE_API_VERSION: '2023-06-01',
+};
+
+// Chart series colors, mirrored from CSS :root variables so JS has one source
+// of truth and the CSS controls the actual hex. Read once on load.
+const COLORS = (() => {
+ const root = getComputedStyle(document.documentElement);
+ return {
+ systolic: root.getPropertyValue('--c-systolic').trim() || '#e8624a',
+ diastolic: root.getPropertyValue('--c-diastolic').trim() || '#6ab8d4',
+ bpm: root.getPropertyValue('--c-bpm').trim() || '#5db87a',
+ };
+})();
+
 // ─── DATA STORE ───────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'pulse_bp_data';
+const STORAGE_KEY = CONFIG.STORAGE_KEY;
 
 function loadData() {
  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
@@ -1158,7 +1204,7 @@ dropZone.addEventListener('drop', e => {
 });
 
 // ─── API KEY MANAGEMENT ───────────────────────────────────────────────────────
-const API_KEY_STORAGE = 'pulse_anthropic_key';
+const API_KEY_STORAGE = CONFIG.API_KEY_STORAGE;
 
 function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
 
@@ -1196,11 +1242,233 @@ function toggleApiPanel() {
  }
 }
 
+// ─── CLAUDE API HELPER ────────────────────────────────────────────────────────
+// Single wrapper for /v1/messages calls. Returns parsed JSON or throws with
+// a useful error message containing status + API error text.
+async function callClaude(apiKey, body) {
+ const res = await fetch(CONFIG.CLAUDE_API_URL, {
+ method: 'POST',
+ headers: {
+ 'Content-Type': 'application/json',
+ 'x-api-key': apiKey,
+ 'anthropic-version': CONFIG.CLAUDE_API_VERSION,
+ 'anthropic-dangerous-direct-browser-access': 'true'
+ },
+ body: JSON.stringify(body)
+ });
+ if (!res.ok) {
+ const err = await res.json().catch(() => ({}));
+ throw new Error('Claude API ' + res.status + ': ' + (err?.error?.message || JSON.stringify(err).slice(0, 200)));
+ }
+ return res.json();
+}
+
+// ─── CANVAS RENDER HELPERS ────────────────────────────────────────────────────
+// Encode a canvas to base64 within CONFIG.MAX_BASE64. Prefers PNG; falls back
+// to progressively-lower-quality JPEG. Returns { b64, type, w, h, dataUrl }.
+function encodeCanvas(c) {
+ const pUrl = c.toDataURL('image/png');
+ const pB64 = pUrl.split(',')[1];
+ if (pB64.length <= CONFIG.MAX_BASE64) return { b64: pB64, type: 'image/png', w: c.width, h: c.height, dataUrl: pUrl };
+ for (let q = 0.96; q >= 0.18; q -= 0.04) {
+ const jUrl = c.toDataURL('image/jpeg', q);
+ const b64 = jUrl.split(',')[1];
+ if (b64.length <= CONFIG.MAX_BASE64) return { b64, type: 'image/jpeg', w: c.width, h: c.height, dataUrl: jUrl };
+ }
+ throw new Error('Could not compress image small enough');
+}
+
+// Render a (possibly cropped, possibly rotated) region of `img` to a canvas
+// sized so its bounding box fits within `maxDim`. Returns the encoded result.
+// crop = {x, y, w, h} in source pixels; pass null for the full image.
+// rotation = degrees CLOCKWISE applied around the crop's center.
+function renderRegion(img, natW, natH, crop, filterCss, maxDim, rotation = 0) {
+ const sx = crop ? crop.x : 0;
+ const sy = crop ? crop.y : 0;
+ const sw = crop ? crop.w : natW;
+ const sh = crop ? crop.h : natH;
+ const rad = (((rotation % 360) + 360) % 360) * Math.PI / 180;
+ const cosT = Math.abs(Math.cos(rad));
+ const sinT = Math.abs(Math.sin(rad));
+ const outW = sw * cosT + sh * sinT;
+ const outH = sw * sinT + sh * cosT;
+ let tw = Math.round(outW), th = Math.round(outH);
+ if (Math.max(tw, th) > maxDim) {
+ const s = maxDim / Math.max(tw, th);
+ tw = Math.round(tw * s);
+ th = Math.round(th * s);
+ }
+ const c = document.createElement('canvas');
+ c.width = tw; c.height = th;
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ if (filterCss) cx.filter = filterCss;
+ const scale = Math.min(tw / outW, th / outH);
+ const drawW = sw * scale, drawH = sh * scale;
+ cx.save();
+ cx.translate(tw/2, th/2);
+ if (rad) cx.rotate(rad);
+ cx.drawImage(img, sx, sy, sw, sh, -drawW/2, -drawH/2, drawW, drawH);
+ cx.restore();
+ cx.filter = 'none';
+ return encodeCanvas(c);
+}
+
+// Render a tight rectangular crop centered on (centerX, centerY) in `img`,
+// with rotation applied. Output is exactly srcW × srcH in source pixel units
+// (scaled to fit maxDim), axis-aligned. Use AFTER computing deskew rotation
+// to get a clean device-shaped output without empty corners.
+function renderDeskewed(img, centerX, centerY, srcW, srcH, rotation, filterCss, maxDim) {
+ let tw = srcW, th = srcH;
+ if (Math.max(tw, th) > maxDim) {
+ const s = maxDim / Math.max(tw, th);
+ tw = Math.round(tw * s);
+ th = Math.round(th * s);
+ }
+ const scale = tw / srcW;
+ const c = document.createElement('canvas');
+ c.width = tw; c.height = th;
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ if (filterCss) cx.filter = filterCss;
+ cx.save();
+ cx.translate(tw / 2, th / 2);
+ if (rotation) cx.rotate(rotation * Math.PI / 180);
+ cx.scale(scale, scale);
+ cx.drawImage(img, -centerX, -centerY);
+ cx.restore();
+ cx.filter = 'none';
+ return encodeCanvas(c);
+}
+
+// ─── OCR PIPELINE STAGES ─────────────────────────────────────────────────────
+// Pass 1: ask Opus where the LCD is. Returns {x, y, w, h, observations} in
+// percent coordinates of the preview image, or null if the call/parse fails.
+async function detectLcdBbox(apiKey, preview) {
+ const data = await callClaude(apiKey, {
+ model: CONFIG.CLAUDE_MODEL,
+ max_tokens: 500,
+ tools: [{
+ name: 'report_lcd_bbox',
+ description: 'Report the axis-aligned bounding box of the LCD/digital display screen on the blood pressure monitor.',
+ input_schema: {
+ type: 'object',
+ properties: {
+ observations: { type: 'string', description: 'Briefly describe where you see the LCD glass area on the device — its approximate location, size, and any tilt/rotation. 1-2 sentences.' },
+ x: { type: 'number', description: 'Left edge of LCD bounding box, as percentage of image width (0-100).' },
+ y: { type: 'number', description: 'Top edge of LCD bounding box, as percentage of image height (0-100).' },
+ w: { type: 'number', description: 'Width of LCD bounding box, as percentage of image width (0-100).' },
+ h: { type: 'number', description: 'Height of LCD bounding box, as percentage of image height (0-100).' }
+ },
+ required: ['observations', 'x', 'y', 'w', 'h']
+ }
+ }],
+ tool_choice: { type: 'tool', name: 'report_lcd_bbox' },
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
+ { type: 'text', text: 'Identify the LCD screen on this blood pressure monitor — the rectangular display area where the digital readout (systolic/diastolic/pulse numbers) appears.\n\nIMPORTANT:\n- Capture ONLY the LCD glass area itself (dark/grey for most devices, or blue-backlit for iHealth-type devices). The LCD glass is the inset display panel.\n- EXCLUDE the white/silver plastic bezel and device casing around the LCD.\n- EXCLUDE side labels printed on the bezel (SYS, DIA, PUL/PULSE, mmHg, M/D, MEM, H/M).\n- EXCLUDE physical buttons (ON/OFF, MEM, SET, START/STOP, M1, M2).\n- If the device is tilted in the photo, return the smallest axis-aligned bounding box that fully contains the tilted LCD glass.\n- The bbox should be TIGHT — the LCD glass should fill almost the entire bounding box.' }
+ ]
+ }]
+ });
+ const toolUse = data.content?.find(b => b.type === 'tool_use');
+ if (!toolUse?.input) return null;
+ const box = toolUse.input;
+ if (box.x == null || box.y == null || box.w == null || box.h == null) return null;
+ return box;
+}
+
+// Pass 1.5: ask Opus which cardinal rotation (0/90/180/270 CW) makes the
+// device upright. Returns the integer degrees, or 0 if it can't decide.
+async function detectCardinalOrientation(apiKey, encoded) {
+ const data = await callClaude(apiKey, {
+ model: CONFIG.CLAUDE_MODEL,
+ max_tokens: 300,
+ system: 'You determine the cardinal rotation needed for a blood pressure monitor LCD photo so the device appears upright.\n\n' +
+ 'Cues for finding "up" on a BP monitor:\n' +
+ '1. Section labels: "SYS" or "SYSTOLIC" is at the TOP of the LCD when upright. "DIA" or "DIASTOLIC" is in the MIDDLE. "PUL", "PULSE", or "BPM" is at the BOTTOM.\n' +
+ '2. Numbers arrangement: When upright, the SYS number (largest, typically 90-200) is at the TOP, the DIA number (typically 50-130) is in the MIDDLE, the pulse number (typically 40-150) is at the BOTTOM.\n' +
+ '3. Brand name: "Omron", "iHealth", "Generation Guard", etc. reads horizontally (left-to-right) when upright.\n' +
+ '4. Physical buttons on the device body are at the BOTTOM when upright.\n' +
+ '5. Time of day / battery / mmHg unit indicators read horizontally when upright.\n\n' +
+ 'Call the set_rotation tool with your observations and answer. The rotation must be one of: 0 (already upright), 90 (image needs 90° CW rotation: currently the top of the device points LEFT in the image), 180 (image is upside down), 270 (image needs 90° CCW rotation, i.e., 270° CW: currently the top of the device points RIGHT in the image).',
+ tools: [{
+ name: 'set_rotation',
+ description: 'Report the cardinal rotation needed to make the LCD upright.',
+ input_schema: {
+ type: 'object',
+ properties: {
+ observations: { type: 'string', description: 'In one sentence, name 1-2 specific orientation cues you can see (e.g., "SYS label is on the right side of the LCD" or "Brand name reads top-to-bottom"). Then state which direction is UP in the current image.' },
+ rotation_cw_degrees: { type: 'integer', enum: [0, 90, 180, 270], description: 'Cardinal CW rotation in degrees needed to make the LCD upright. Choose exactly one of: 0, 90, 180, 270.' }
+ },
+ required: ['observations', 'rotation_cw_degrees']
+ }
+ }],
+ tool_choice: { type: 'tool', name: 'set_rotation' },
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: encoded.type, data: encoded.b64 } },
+ { type: 'text', text: 'What cardinal rotation is needed to make this BP monitor LCD appear upright? Use the orientation cues to identify which side is naturally UP.' }
+ ]
+ }]
+ });
+ const tool = data.content?.find(b => b.type === 'tool_use' && b.name === 'set_rotation');
+ if (!tool?.input) return { rotation_cw_degrees: 0, observations: 'no tool_use block' };
+ return tool.input;
+}
+
+// Pass 2: send the deskewed/cropped image to Opus and parse the BP reading.
+// Returns {systolic, diastolic, bpm, device}, any value may be null.
+async function extractReading(apiKey, encoded) {
+ const data = await callClaude(apiKey, {
+ model: CONFIG.CLAUDE_MODEL,
+ max_tokens: 200,
+ system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
+ messages: [{
+ role: 'user',
+ content: [
+ { type: 'image', source: { type: 'base64', media_type: encoded.type, data: encoded.b64 } },
+ { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.' }
+ ]
+ }]
+ });
+ const text = data.content?.find(b => b.type === 'text')?.text || '';
+ const m = text.match(/\{[\s\S]*?\}/);
+ if (!m) throw new Error('No JSON found. Claude said: "' + text.slice(0, 300) + '"');
+ return JSON.parse(m[0]);
+}
+
+// Geometric recovery of the LCD's actual (axis-aligned, post-deskew) dimensions
+// from its source bounding box and the deskew angle. The formula is the inverse
+// of bbox = (W·|cosθ| + H·|sinθ|, W·|sinθ| + H·|cosθ|) for a rotated rectangle.
+// When the math gives unreliable results (typically when edge detection
+// over-estimated the rotation), returns the bbox dims with usedFallback=true.
+function computeActualLcdDims(bboxW, bboxH, deskewDeg) {
+ const absD = Math.abs(deskewDeg);
+ if (absD < 1) return { w: bboxW, h: bboxH, usedFallback: false };
+ if (absD >= 44) return { w: bboxW, h: bboxH, usedFallback: true };
+ const cosD = Math.cos(absD * Math.PI / 180);
+ const sinD = Math.sin(absD * Math.PI / 180);
+ const cos2D = cosD * cosD - sinD * sinD;
+ if (cos2D <= 0.05) return { w: bboxW, h: bboxH, usedFallback: true };
+ const aw = (bboxW * cosD - bboxH * sinD) / cos2D;
+ const ah = (bboxH * cosD - bboxW * sinD) / cos2D;
+ // Sanity-check: positive, smaller than bbox in each dim, not absurdly skewed.
+ if (aw > 0 && ah > 0 && aw <= bboxW && ah <= bboxH &&
+ aw >= bboxW * 0.3 && ah >= bboxH * 0.3) {
+ return { w: aw, h: ah, usedFallback: false };
+ }
+ return { w: bboxW, h: bboxH, usedFallback: true };
+}
+
 // Init API key button state on load
 document.addEventListener('DOMContentLoaded', updateApiKeyBtn);
 setTimeout(updateApiKeyBtn, 100);
 
 // ─── FILE HANDLING & CLAUDE VISION ───────────────────────────────────────────
+// Top-level entry: validate files, queue items, dispatch each to processOcrFile.
 async function handleFiles(files) {
  const apiKey = getApiKey();
  if (!apiKey) {
@@ -1227,234 +1495,70 @@ async function handleFiles(files) {
  '\n\nSupported types: PNG, JPG, JPEG, HEIC');
  }
  if (list.length === 0) return;
- const toProcess = list.slice(0, 10);
+ const toProcess = list.slice(0, CONFIG.MAX_FILES_PER_BATCH);
 
  for (const file of toProcess) {
- const qid = genId();
- const item = { qid, file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
+ const item = { qid: genId(), file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
  ocrQueue.push(item);
  renderOCRQueue();
+ await processOcrFile(item, file, apiKey);
+ renderOCRQueue();
+ }
+}
 
- // Extract EXIF date from metadata
+// Process a single image end-to-end: load → bbox → deskew → cardinal → OCR.
+// All errors are caught and surfaced on the item; the loop continues either way.
+async function processOcrFile(item, file, apiKey) {
+ // EXIF date for the queue
  const exifDt = await getExifDate(file);
  item.dt = exifDt || nowLocalISO();
 
- // Single-pass: send full high-res image to Opus 4.7 for OCR
  try {
- // Overall 40s timeout — catches HEIC conversion hangs
- const loadPromise = loadImage(file);
+ // Load image with overall timeout — catches HEIC conversion hangs
  const timeoutPromise = new Promise((_, rej) =>
- setTimeout(() => rej(new Error('Image processing timed out. For HEIC files, please convert to JPG first (on iPhone: Settings → Camera → Formats → Most Compatible).')), 40000)
+ setTimeout(() => rej(new Error('Image processing timed out. For HEIC files, please convert to JPG first (on iPhone: Settings → Camera → Formats → Most Compatible).')), CONFIG.IMAGE_LOAD_TIMEOUT_MS)
  );
- const { img, dataUrl } = await Promise.race([loadPromise, timeoutPromise]);
+ const { img } = await Promise.race([loadImage(file), timeoutPromise]);
  const natW = img.naturalWidth, natH = img.naturalHeight;
 
- // Create small thumbnail for queue display (~240px max dimension, JPEG 0.75)
- // Stored as a FALLBACK in case deskew fails. Not displayed yet (thumbReady stays false).
+ // Cheap fallback thumbnail (used only if deskew fails)
  const thumbCanvas = document.createElement('canvas');
- const thumbScale = Math.min(1, 240 / Math.max(natW, natH));
+ const thumbScale = Math.min(1, CONFIG.THUMB_FALLBACK_MAX_DIM / Math.max(natW, natH));
  thumbCanvas.width = Math.round(natW * thumbScale);
  thumbCanvas.height = Math.round(natH * thumbScale);
  const tctx = thumbCanvas.getContext('2d');
  tctx.imageSmoothingQuality = 'high';
  tctx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
  item.thumb = thumbCanvas.toDataURL('image/jpeg', 0.75);
- // Note: NOT calling renderOCRQueue() here — we want the spinner to keep showing
- // until the deskewed crop is ready.
+ // (Spinner stays until deskewed crop is ready.)
 
- const MAX_BASE64 = 5242880 - 50000;
- const OPUS_MAX_DIM = 2576;
-
- // Helper: render a region of the image with optional filter + rotation, scaled to fit
- // crop = {x, y, w, h} in source pixels; or null for full image
- // rotation = degrees CLOCKWISE to apply (any value, not limited to cardinals)
- const renderRegion = (crop, filterCss, maxDim, rotation = 0) => {
- const sx = crop ? crop.x : 0;
- const sy = crop ? crop.y : 0;
- const sw = crop ? crop.w : natW;
- const sh = crop ? crop.h : natH;
- const rot = ((rotation % 360) + 360) % 360;
- const rad = rot * Math.PI / 180;
- // Bounding box of rotated rectangle = output dimensions
- const cosT = Math.abs(Math.cos(rad));
- const sinT = Math.abs(Math.sin(rad));
- const outW = sw * cosT + sh * sinT;
- const outH = sw * sinT + sh * cosT;
- let tw = Math.round(outW), th = Math.round(outH);
- if (Math.max(tw, th) > maxDim) {
- const s = maxDim / Math.max(tw, th);
- tw = Math.round(tw * s);
- th = Math.round(th * s);
- }
- const c = document.createElement('canvas');
- c.width = tw;
- c.height = th;
- const cx = c.getContext('2d');
- cx.imageSmoothingQuality = 'high';
- if (filterCss) cx.filter = filterCss;
- // Scale source so its rotated bounding box exactly fills the output canvas
- const scale = Math.min(tw / outW, th / outH);
- const drawW = sw * scale;
- const drawH = sh * scale;
- cx.save();
- cx.translate(tw/2, th/2);
- if (rot) cx.rotate(rad);
- cx.drawImage(img, sx, sy, sw, sh, -drawW/2, -drawH/2, drawW, drawH);
- cx.restore();
- cx.filter = 'none';
- const pUrl = c.toDataURL('image/png');
- const pB64 = pUrl.split(',')[1];
- if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png', w: tw, h: th, dataUrl: pUrl };
- for (let q = 0.96; q >= 0.18; q -= 0.04) {
- const jUrl = c.toDataURL('image/jpeg', q);
- const b64 = jUrl.split(',')[1];
- if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg', w: tw, h: th, dataUrl: jUrl };
- }
- throw new Error('Could not compress image small enough');
- };
-
- // For backward compatibility, renderAndEncode = full image with filter
- const renderAndEncode = (filterCss) => renderRegion(null, filterCss, OPUS_MAX_DIM);
-
- // Helper: render a tight rectangular crop centered on (centerX, centerY) in the
- // source image, with optional rotation applied. The output is exactly srcW × srcH
- // in source pixel units (scaled to fit maxDim), axis-aligned. Use this AFTER
- // determining the deskew rotation to get a clean device-shaped output with no
- // empty corners from rotation expansion.
- const renderDeskewed = (centerX, centerY, srcW, srcH, rotation, filterCss, maxDim) => {
- let tw = srcW, th = srcH;
- if (Math.max(tw, th) > maxDim) {
- const s = maxDim / Math.max(tw, th);
- tw = Math.round(tw * s);
- th = Math.round(th * s);
- }
- const scale = tw / srcW;
- const c = document.createElement('canvas');
- c.width = tw;
- c.height = th;
- const cx = c.getContext('2d');
- cx.imageSmoothingQuality = 'high';
- if (filterCss) cx.filter = filterCss;
- cx.save();
- // Origin at output center, rotate, scale, then draw image with its (centerX, centerY) at origin
- cx.translate(tw / 2, th / 2);
- if (rotation) cx.rotate(rotation * Math.PI / 180);
- cx.scale(scale, scale);
- cx.drawImage(img, -centerX, -centerY);
- cx.restore();
- cx.filter = 'none';
- const pUrl = c.toDataURL('image/png');
- const pB64 = pUrl.split(',')[1];
- if (pB64.length <= MAX_BASE64) return { b64: pB64, type: 'image/png', w: tw, h: th, dataUrl: pUrl };
- for (let q = 0.96; q >= 0.18; q -= 0.04) {
- const jUrl = c.toDataURL('image/jpeg', q);
- const b64 = jUrl.split(',')[1];
- if (b64.length <= MAX_BASE64) return { b64, type: 'image/jpeg', w: tw, h: th, dataUrl: jUrl };
- }
- throw new Error('Could not compress image small enough');
- };
-
- // Helper: call Opus 4.7 and parse the JSON response
- const callOCR = async (encoded) => {
- const resp = await fetch('https://api.anthropic.com/v1/messages', {
- method: 'POST',
- headers: {
- 'Content-Type': 'application/json',
- 'x-api-key': apiKey,
- 'anthropic-version': '2023-06-01',
- 'anthropic-dangerous-direct-browser-access': 'true'
- },
- body: JSON.stringify({
- model: 'claude-opus-4-7',
- max_tokens: 200,
- system: 'You read blood pressure monitors from photos. Find the LCD/digital display and return ONLY a JSON object: {"systolic":NUMBER,"diastolic":NUMBER,"bpm":NUMBER,"device":"BRAND"}. Most monitors show three numbers stacked vertically: SYS (top, largest), DIA (middle), and PUL/PULSE (bottom, smaller). Use null if a value is not visible. No other text.',
- messages: [{
- role: 'user',
- content: [
- { type: 'image', source: { type: 'base64', media_type: encoded.type, data: encoded.b64 } },
- { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.' }
- ]
- }]
- })
- });
- if (!resp.ok) {
- const err = await resp.json().catch(() => ({}));
- throw new Error('API ' + resp.status + ': ' + (err?.error?.message || JSON.stringify(err).slice(0,200)));
- }
- const respData = await resp.json();
- const respText = respData.content?.find(b => b.type === 'text')?.text || '';
- const m = respText.match(/\{[\s\S]*?\}/);
- if (!m) throw new Error('No JSON found. Claude said: "' + respText.slice(0, 300) + '"');
- return JSON.parse(m[0]);
- };
-
- // PASS 1: LCD bbox detection with Opus 4.7 via tool_use (rotation via edge detection)
+ // PASS 1: bbox detection with Opus
  let crop = null;
  let rotation = 0;
  try {
- const preview = renderRegion(null, null, 1200);
+ const preview = renderRegion(img, natW, natH, null, null, CONFIG.BBOX_PREVIEW_MAX_DIM);
  console.log('Pulse: Pass 1 — detecting LCD bbox with Opus 4.7');
- const bboxResp = await fetch('https://api.anthropic.com/v1/messages', {
- method: 'POST',
- headers: {
- 'Content-Type': 'application/json',
- 'x-api-key': apiKey,
- 'anthropic-version': '2023-06-01',
- 'anthropic-dangerous-direct-browser-access': 'true'
- },
- body: JSON.stringify({
- model: 'claude-opus-4-7',
- max_tokens: 500,
- tools: [{
- name: 'report_lcd_bbox',
- description: 'Report the axis-aligned bounding box of the LCD/digital display screen on the blood pressure monitor.',
- input_schema: {
- type: 'object',
- properties: {
- observations: { type: 'string', description: 'Briefly describe where you see the LCD glass area on the device — its approximate location, size, and any tilt/rotation. 1-2 sentences.' },
- x: { type: 'number', description: 'Left edge of LCD bounding box, as percentage of image width (0-100).' },
- y: { type: 'number', description: 'Top edge of LCD bounding box, as percentage of image height (0-100).' },
- w: { type: 'number', description: 'Width of LCD bounding box, as percentage of image width (0-100).' },
- h: { type: 'number', description: 'Height of LCD bounding box, as percentage of image height (0-100).' }
- },
- required: ['observations', 'x', 'y', 'w', 'h']
- }
- }],
- tool_choice: { type: 'tool', name: 'report_lcd_bbox' },
- messages: [{
- role: 'user',
- content: [
- { type: 'image', source: { type: 'base64', media_type: preview.type, data: preview.b64 } },
- { type: 'text', text: 'Identify the LCD screen on this blood pressure monitor — the rectangular display area where the digital readout (systolic/diastolic/pulse numbers) appears.\n\nIMPORTANT:\n- Capture ONLY the LCD glass area itself (dark/grey for most devices, or blue-backlit for iHealth-type devices). The LCD glass is the inset display panel.\n- EXCLUDE the white/silver plastic bezel and device casing around the LCD.\n- EXCLUDE side labels printed on the bezel (SYS, DIA, PUL/PULSE, mmHg, M/D, MEM, H/M).\n- EXCLUDE physical buttons (ON/OFF, MEM, SET, START/STOP, M1, M2).\n- If the device is tilted in the photo, return the smallest axis-aligned bounding box that fully contains the tilted LCD glass.\n- The bbox should be TIGHT — the LCD glass should fill almost the entire bounding box.' }
- ]
- }]
- })
- });
- if (bboxResp.ok) {
- const bboxData = await bboxResp.json();
- const toolUse = bboxData.content?.find(b => b.type === 'tool_use');
- if (toolUse && toolUse.input) {
- const box = toolUse.input;
+ const box = await detectLcdBbox(apiKey, preview);
+ if (box) {
  console.log('Pulse: Opus bbox observations:', box.observations);
  console.log('Pulse: Opus bbox raw:', JSON.stringify({x:box.x, y:box.y, w:box.w, h:box.h}));
- if (box.x != null && box.y != null && box.w != null && box.h != null) {
- // Apply 25% padding around bbox
- const padX = box.w * 0.25;
- const padY = box.h * 0.25;
+
+ // Pad bbox by BBOX_PADDING_PCT each side and convert to source pixels
+ const padX = box.w * CONFIG.BBOX_PADDING_PCT;
+ const padY = box.h * CONFIG.BBOX_PADDING_PCT;
  const x1 = Math.max(0, box.x - padX) / 100 * natW;
  const y1 = Math.max(0, box.y - padY) / 100 * natH;
  const x2 = Math.min(100, box.x + box.w + padX) / 100 * natW;
  const y2 = Math.min(100, box.y + box.h + padY) / 100 * natH;
  crop = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
- console.log('Pulse: LCD bbox + 25% padding: ' + crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
+ console.log('Pulse: LCD bbox + ' + Math.round(CONFIG.BBOX_PADDING_PCT * 100) + '% padding: ' +
+ crop.x + ',' + crop.y + ' ' + crop.w + 'x' + crop.h +
  ' (' + Math.round(crop.w*crop.h/(natW*natH)*100) + '% of image)');
 
- // Edge-detection rotation: render the cropped region at moderate resolution
- // and run Sobel-based dominant edge angle detection
+ // Edge-detection rotation on the padded crop
  try {
  const edgeCanvas = document.createElement('canvas');
- const edgeMaxDim = 800;
- const scale = Math.min(1, edgeMaxDim / Math.max(crop.w, crop.h));
+ const scale = Math.min(1, CONFIG.EDGE_DETECT_MAX_DIM / Math.max(crop.w, crop.h));
  edgeCanvas.width = Math.round(crop.w * scale);
  edgeCanvas.height = Math.round(crop.h * scale);
  const ectx = edgeCanvas.getContext('2d');
@@ -1463,145 +1567,52 @@ async function handleFiles(files) {
  rotation = detectRotationFromEdges(edgeCanvas);
  } catch(e) { console.log('Pulse: edge detection failed, rotation=0:', e.message); rotation = 0; }
 
- // Save the deskew rotation BEFORE the cardinal check adds 0/90/180/270.
- // We need this later to recover the LCD's actual axis-aligned dimensions.
+ // Cardinal orientation check — uses a small deskewed preview so the device
+ // is roughly axis-aligned. Save the deskew rotation BEFORE the cardinal
+ // adds 0/90/180/270 — we need it for the actualLCD math below.
  const deskewRotation = rotation;
-
- // Compute LCD center and base output dimensions (LCD + 25% padding each side)
  const lcdCenterX = (box.x + box.w/2) / 100 * natW;
  const lcdCenterY = (box.y + box.h/2) / 100 * natH;
  const lcdW_px = box.w / 100 * natW;
  const lcdH_px = box.h / 100 * natH;
 
- // CARDINAL ORIENTATION CHECK: edge detection only aligns rectangular edges; if the
- // device is on its side or upside down, the LCD edges are already axis-aligned but
- // text is rotated 90/180/270°. Ask Opus (with tool_use) which cardinal rotation is needed.
  try {
- // Render a small preview with edge-detection rotation applied
- const previewW_initial = lcdW_px * 1.5;
- const previewH_initial = lcdH_px * 1.5;
- const cardinalPreview = renderDeskewed(lcdCenterX, lcdCenterY, previewW_initial, previewH_initial, rotation, null, 500);
+ const previewW = lcdW_px * CONFIG.PAD_MULT_NORMAL;
+ const previewH = lcdH_px * CONFIG.PAD_MULT_NORMAL;
+ const cardinalPreview = renderDeskewed(img, lcdCenterX, lcdCenterY, previewW, previewH, rotation, null, CONFIG.CARDINAL_PREVIEW_MAX_DIM);
  console.log('Pulse: cardinal check — asking Opus for orientation correction (tool_use)');
- const cardinalResp = await fetch('https://api.anthropic.com/v1/messages', {
- method: 'POST',
- headers: {
- 'Content-Type': 'application/json',
- 'x-api-key': apiKey,
- 'anthropic-version': '2023-06-01',
- 'anthropic-dangerous-direct-browser-access': 'true'
- },
- body: JSON.stringify({
- model: 'claude-opus-4-7',
- max_tokens: 300,
- system: 'You determine the cardinal rotation needed for a blood pressure monitor LCD photo so the device appears upright.\n\n' +
- 'Cues for finding "up" on a BP monitor:\n' +
- '1. Section labels: "SYS" or "SYSTOLIC" is at the TOP of the LCD when upright. "DIA" or "DIASTOLIC" is in the MIDDLE. "PUL", "PULSE", or "BPM" is at the BOTTOM.\n' +
- '2. Numbers arrangement: When upright, the SYS number (largest, typically 90-200) is at the TOP, the DIA number (typically 50-130) is in the MIDDLE, the pulse number (typically 40-150) is at the BOTTOM.\n' +
- '3. Brand name: "Omron", "iHealth", "Generation Guard", etc. reads horizontally (left-to-right) when upright.\n' +
- '4. Physical buttons on the device body are at the BOTTOM when upright.\n' +
- '5. Time of day / battery / mmHg unit indicators read horizontally when upright.\n\n' +
- 'Call the set_rotation tool with your observations and answer. The rotation must be one of: 0 (already upright), 90 (image needs 90° CW rotation: currently the top of the device points LEFT in the image), 180 (image is upside down), 270 (image needs 90° CCW rotation, i.e., 270° CW: currently the top of the device points RIGHT in the image).',
- tools: [{
- name: 'set_rotation',
- description: 'Report the cardinal rotation needed to make the LCD upright.',
- input_schema: {
- type: 'object',
- properties: {
- observations: {
- type: 'string',
- description: 'In one sentence, name 1-2 specific orientation cues you can see (e.g., "SYS label is on the right side of the LCD" or "Brand name reads top-to-bottom"). Then state which direction is UP in the current image.'
- },
- rotation_cw_degrees: {
- type: 'integer',
- enum: [0, 90, 180, 270],
- description: 'Cardinal CW rotation in degrees needed to make the LCD upright. Choose exactly one of: 0, 90, 180, 270.'
- }
- },
- required: ['observations', 'rotation_cw_degrees']
- }
- }],
- tool_choice: { type: 'tool', name: 'set_rotation' },
- messages: [{
- role: 'user',
- content: [
- { type: 'image', source: { type: 'base64', media_type: cardinalPreview.type, data: cardinalPreview.b64 } },
- { type: 'text', text: 'What cardinal rotation is needed to make this BP monitor LCD appear upright? Use the orientation cues to identify which side is naturally UP.' }
- ]
- }]
- })
- });
- if (cardinalResp.ok) {
- const respData = await cardinalResp.json();
- const toolUseBlock = respData.content?.find(b => b.type === 'tool_use' && b.name === 'set_rotation');
- if (toolUseBlock && toolUseBlock.input) {
- const { observations, rotation_cw_degrees } = toolUseBlock.input;
- console.log('Pulse: cardinal observations:', observations);
- console.log('Pulse: cardinal rotation_cw_degrees:', rotation_cw_degrees);
- if ([0, 90, 180, 270].includes(rotation_cw_degrees) && rotation_cw_degrees !== 0) {
+ const cardinal = await detectCardinalOrientation(apiKey, cardinalPreview);
+ console.log('Pulse: cardinal observations:', cardinal.observations);
+ console.log('Pulse: cardinal rotation_cw_degrees:', cardinal.rotation_cw_degrees);
+ if ([90, 180, 270].includes(cardinal.rotation_cw_degrees)) {
  const before = rotation;
- rotation += rotation_cw_degrees;
- console.log('Pulse: cardinal correction +' + rotation_cw_degrees + '°, total rotation=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
+ rotation += cardinal.rotation_cw_degrees;
+ console.log('Pulse: cardinal correction +' + cardinal.rotation_cw_degrees + '°, total rotation=' + rotation.toFixed(1) + '° (was ' + before.toFixed(1) + '°)');
  } else {
  console.log('Pulse: cardinal check says no additional rotation needed');
  }
- } else {
- console.log('Pulse: cardinal check returned no tool_use block, raw response:', JSON.stringify(respData.content));
- }
- } else {
- console.log('Pulse: cardinal check API failed:', cardinalResp.status);
- }
  } catch(e) { console.log('Pulse: cardinal check failed, keeping edge-detection rotation:', e.message); }
 
- // Compute actual LCD dimensions (post-deskew, axis-aligned). The Opus bbox
- // captures the TILTED LCD which appears larger than the actual rectangle.
- // Recovering actual dims lets us size the output canvas to match the LCD's
- // natural shape with uniform 25% padding on all sides.
- let actualLCDW = lcdW_px;
- let actualLCDH = lcdH_px;
- let usedBboxFallback = true; // becomes false if formula succeeds
- const absD = Math.abs(deskewRotation);
- if (absD < 1) {
- // Negligible rotation: bbox equals LCD by definition. Treat as "succeeded".
- usedBboxFallback = false;
- } else if (absD < 44) {
- const cosD = Math.cos(absD * Math.PI / 180);
- const sinD = Math.sin(absD * Math.PI / 180);
- const cos2D = cosD * cosD - sinD * sinD;
- if (cos2D > 0.05) {
- const aw = (lcdW_px * cosD - lcdH_px * sinD) / cos2D;
- const ah = (lcdH_px * cosD - lcdW_px * sinD) / cos2D;
- // Sanity-check: results must be smaller than bbox (geometric necessity)
- // and not absurdly skewed. If math is unreliable (often when edge detection
- // over-estimated the rotation), fall back to bbox dims.
- if (aw > 0 && ah > 0 && aw <= lcdW_px && ah <= lcdH_px &&
- aw >= lcdW_px * 0.3 && ah >= lcdH_px * 0.3) {
- actualLCDW = aw;
- actualLCDH = ah;
- usedBboxFallback = false;
- console.log('Pulse: actual LCD dims (post-deskew): ' + Math.round(aw) + 'x' + Math.round(ah) + ' (vs source bbox ' + Math.round(lcdW_px) + 'x' + Math.round(lcdH_px) + ')');
- } else {
+ // Recover actual LCD dims (post-deskew, axis-aligned) from bbox + deskew angle
+ const lcd = computeActualLcdDims(lcdW_px, lcdH_px, deskewRotation);
+ if (lcd.usedFallback) {
  console.log('Pulse: actual LCD calc gave unreliable result (rotation likely over-estimated); using bbox dims with reduced padding');
- }
- }
+ } else if (Math.abs(deskewRotation) >= 1) {
+ console.log('Pulse: actual LCD dims (post-deskew): ' + Math.round(lcd.w) + 'x' + Math.round(lcd.h) + ' (vs source bbox ' + Math.round(lcdW_px) + 'x' + Math.round(lcdH_px) + ')');
  }
 
- // Padding multiplier: 1.5× (25% each side) when we know the actual LCD shape;
- // 1.2× (10% each side) when we fell back to bbox dims, because a tilted-LCD
- // bbox is already much bigger than the LCD itself — adding another 25%
- // creates a visibly loose crop.
- const padMul = usedBboxFallback ? 1.2 : 1.5;
-
- // Determine output dimensions based on whether final rotation swaps width/height
+ // Smaller padding when we're using bbox-fallback (bbox already includes rotation slack)
+ const padMul = lcd.usedFallback ? CONFIG.PAD_MULT_FALLBACK : CONFIG.PAD_MULT_NORMAL;
  const totalRotMod = ((rotation % 360) + 360) % 360;
  const swap = (totalRotMod >= 45 && totalRotMod < 135) || (totalRotMod >= 225 && totalRotMod < 315);
- const outSrcW = (swap ? actualLCDH : actualLCDW) * padMul;
- const outSrcH = (swap ? actualLCDW : actualLCDH) * padMul;
+ const outSrcW = (swap ? lcd.h : lcd.w) * padMul;
+ const outSrcH = (swap ? lcd.w : lcd.h) * padMul;
  if (swap) console.log('Pulse: dimensions swapped for cardinal rotation (device was sideways)');
  console.log('Pulse: output canvas (LCD * ' + padMul + ' with ' + Math.round((padMul-1)*50) + '% padding each side): ' + Math.round(outSrcW) + 'x' + Math.round(outSrcH));
 
- // Regenerate thumbnail using deskewed render (tight LCD-shaped crop, no empty corners)
+ // Regenerate thumb with the deskewed crop
  try {
- const cropped = renderDeskewed(lcdCenterX, lcdCenterY, outSrcW, outSrcH, rotation, null, 360);
+ const cropped = renderDeskewed(img, lcdCenterX, lcdCenterY, outSrcW, outSrcH, rotation, null, CONFIG.THUMB_DESKEWED_MAX_DIM);
  if (item.thumb && item.thumb.startsWith('blob:')) {
  try { URL.revokeObjectURL(item.thumb); } catch(e) {}
  }
@@ -1609,38 +1620,27 @@ async function handleFiles(files) {
  item.thumbReady = true;
  renderOCRQueue();
  } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
- // Store deskewed render params for Pass 2 to reuse
+
+ // Remember the deskew params so Pass 2 can re-render at OCR resolution
  item._deskew = { cx: lcdCenterX, cy: lcdCenterY, w: outSrcW, h: outSrcH };
- }
- }
- } else {
- console.log('Pulse: Opus bbox call failed:', bboxResp.status);
  }
  } catch(e) { console.log('Pulse: bbox detection failed, will use full image:', e.message); }
 
- // PASS 2: Send tight LCD-shaped deskewed image with grayscale + contrast to Opus 4.7
+ // PASS 2: OCR — try with preprocessing, then retry without it if anything is null
  console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (item._deskew ? ' (deskewed device-shaped crop)' : ' (full)') + (rotation ? ', rotation=' + rotation + '°' : ''));
- let encoded;
- if (item._deskew) {
- encoded = renderDeskewed(item._deskew.cx, item._deskew.cy, item._deskew.w, item._deskew.h, rotation, 'grayscale(1) contrast(1.5) brightness(1.05)', OPUS_MAX_DIM);
- } else {
- encoded = renderRegion(crop, 'grayscale(1) contrast(1.5) brightness(1.05)', OPUS_MAX_DIM, rotation);
- }
- console.log('Pulse: attempt 1 — ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
- let parsed = await callOCR(encoded);
+ const renderForOCR = (filter) => item._deskew
+ ? renderDeskewed(img, item._deskew.cx, item._deskew.cy, item._deskew.w, item._deskew.h, rotation, filter, CONFIG.OPUS_MAX_DIM)
+ : renderRegion(img, natW, natH, crop, filter, CONFIG.OPUS_MAX_DIM, rotation);
 
- // Retry without preprocessing if any value is null (catches cases where grayscale loses needed info)
+ let encoded = renderForOCR('grayscale(1) contrast(1.5) brightness(1.05)');
+ console.log('Pulse: attempt 1 — ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
+ let parsed = await extractReading(apiKey, encoded);
+
  if (parsed.systolic == null || parsed.diastolic == null || parsed.bpm == null) {
  console.log('Pulse: null value detected, retrying without preprocessing (original colors)');
- let encoded2;
- if (item._deskew) {
- encoded2 = renderDeskewed(item._deskew.cx, item._deskew.cy, item._deskew.w, item._deskew.h, rotation, null, OPUS_MAX_DIM);
- } else {
- encoded2 = renderRegion(crop, null, OPUS_MAX_DIM, rotation);
- }
+ const encoded2 = renderForOCR(null);
  console.log('Pulse: attempt 2 — ' + (encoded2.b64.length/1e6).toFixed(1) + 'MB ' + encoded2.type + ' at ' + encoded2.w + 'x' + encoded2.h);
- const retry = await callOCR(encoded2);
- // Merge: prefer non-null from either attempt
+ const retry = await extractReading(apiKey, encoded2);
  parsed = {
  systolic: parsed.systolic != null ? parsed.systolic : retry.systolic,
  diastolic: parsed.diastolic != null ? parsed.diastolic : retry.diastolic,
@@ -1654,10 +1654,10 @@ async function handleFiles(files) {
  item.bpm = parsed.bpm != null ? String(parsed.bpm) : '';
  item.device = parsed.device || '';
  item.status = 'ready';
- item.thumbReady = true; // ensure thumb is shown (deskewed crop or canvas fallback)
+ item.thumbReady = true;
  } catch(e) {
  item.status = 'error';
- item.thumbReady = true; // show whatever thumb we have so user can see what failed
+ item.thumbReady = true;
  console.error('Pulse error:', e);
  if (e.message === 'Failed to fetch' || (e.name === 'TypeError' && !e.message.includes('API'))) {
  const isFile = window.location.protocol === 'file:';
@@ -1668,9 +1668,8 @@ async function handleFiles(files) {
  item.errorMsg = e.message || 'Unknown error';
  }
  }
- renderOCRQueue();
- }
 }
+
 
 function fileToBase64(file) {
  return new Promise((resolve, reject) => {
@@ -1969,15 +1968,15 @@ function renderData() {
  <div class="stats-row">
  <div class="stat-card">
  <div class="stat-label">Avg Systolic</div>
- <div class="stat-value" style="color:#e8624a">${avgSys}<span> mmHg</span></div>
+ <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Diastolic</div>
- <div class="stat-value" style="color:#6ab8d4">${avgDia}<span> mmHg</span></div>
+ <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Heart Rate</div>
- <div class="stat-value" style="color:#5db87a">${avgBpm}<span> bpm</span></div>
+ <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  </div>
  </div>
  ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
@@ -2138,7 +2137,7 @@ function renderChart(data) {
  {
  label: 'Systolic',
  data: data.map(r => r.sys),
- borderColor: '#e8624a',
+ borderColor: COLORS.systolic,
  backgroundColor: 'rgba(232,98,74,0.12)',
  pointBackgroundColor: data.map(r => bpCategory(r.sys,r.dia).color),
  pointRadius: 5,
@@ -2149,9 +2148,9 @@ function renderChart(data) {
  {
  label: 'Diastolic',
  data: data.map(r => r.dia),
- borderColor: '#6ab8d4',
+ borderColor: COLORS.diastolic,
  backgroundColor: 'rgba(106,184,212,0.07)',
- pointBackgroundColor: '#6ab8d4',
+ pointBackgroundColor: COLORS.diastolic,
  pointRadius: 4,
  pointHoverRadius: 7,
  tension: 0.35,
@@ -2160,9 +2159,9 @@ function renderChart(data) {
  {
  label: 'BPM',
  data: data.map(r => r.bpm || null),
- borderColor: '#5db87a',
+ borderColor: COLORS.bpm,
  backgroundColor: 'transparent',
- pointBackgroundColor: '#5db87a',
+ pointBackgroundColor: COLORS.bpm,
  pointRadius: 3,
  pointHoverRadius: 6,
  tension: 0.35,
@@ -2200,9 +2199,9 @@ function renderChart(data) {
  const dt = new Date(r.dt);
  tooltip.innerHTML = `
  <div class="tt-bp" style="color:${cat.color}">${r.sys}/${r.dia}</div>
- <div class="tt-row"><span style="color:#e8624a">Systolic</span> <strong>${r.sys}</strong></div>
- <div class="tt-row"><span style="color:#6ab8d4">Diastolic</span> <strong>${r.dia}</strong></div>
- ${r.bpm ? `<div class="tt-row"><span style="color:#5db87a">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
+ <div class="tt-row"><span style="color:var(--c-systolic)">Systolic</span> <strong>${r.sys}</strong></div>
+ <div class="tt-row"><span style="color:var(--c-diastolic)">Diastolic</span> <strong>${r.dia}</strong></div>
+ ${r.bpm ? `<div class="tt-row"><span style="color:var(--c-bpm)">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
  <div class="tt-meta" style="margin-top:6px">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
  ${r.notes ? `<div style="margin-top:6px;font-size:12px;color:var(--text2)">${escapeHtml(r.notes)}</div>` : ''}
  `;
