@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.30 — 2026-06-15 | Manual Entry rebuilt to match Photo Entry layout (Date/Time left-aligned, no filename/image-preview block, Device-Sys-Dia-BPM row, Notes + inline Save button); 'Commit' renamed to 'Save' everywhere in Photo Entry (per-item button, queue count text, override-warning, Save All) -->
+<!-- Pulse v6.31 — 2026-06-15 | Manual Entry refined: now wrapped in a gray card matching Photo Entry items; Device field spans the combined width of Date+Time above it; Sys/Dia/BPM evenly divide remaining width; their right edges and the Notes field right edge all align at the Save-button column boundary; mobile collapses to 2-column layout -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -501,40 +501,34 @@
  .ocr-grid .ocr-col-time input,
  .ocr-grid .ocr-col-device input { width: 100%; }
 
- /* Manual-entry grid — same row structure as ocr-grid but Date/Time are
- LEFT-aligned (no filename column on the left). Mobile rules mirror ocr-grid. */
+ /* Manual-entry grid — single grid with 6 columns:
+ col 1: 140px (Date) col 2: 100px (Time)
+ col 3-5: 3 × 1fr (Sys, Dia, BPM evenly)
+ col 6: auto (Save button width — reserved across all rows)
+ Device spans cols 1-2 (same as Date+Time combined) and sits under them.
+ Notes spans cols 1-5 so its right edge aligns with the right edge of BPM. */
+ .manual-entry-box {
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 14px;
+ }
  .manual-grid {
  display: grid;
- grid-template-columns: 140px 100px minmax(0, 1fr);
+ grid-template-columns: 140px 100px minmax(70px, 1fr) minmax(70px, 1fr) minmax(70px, 1fr) auto;
  column-gap: 10px;
  row-gap: 8px;
  align-items: end;
  }
  .manual-grid .manual-col-date { grid-column: 1; grid-row: 1; }
  .manual-grid .manual-col-time { grid-column: 2; grid-row: 1; }
- .manual-grid .manual-row-meas {
- grid-column: 1 / -1; grid-row: 2;
- display: flex; gap: 10px; align-items: end;
- min-width: 0;
- }
- .manual-grid .manual-row-meas .ocr-col-device { flex: 1 1 140px; min-width: 0; }
- .manual-grid .manual-row-meas .ocr-field-sys,
- .manual-grid .manual-row-meas .ocr-field-dia,
- .manual-grid .manual-row-meas .ocr-field-bpm { flex: 0 0 90px; }
- .manual-grid .manual-row-bottom {
- grid-column: 1 / -1; grid-row: 3;
- display: flex; gap: 10px; align-items: end;
- min-width: 0;
- }
- .manual-grid .manual-row-bottom .manual-col-notes { flex: 1; min-width: 0; }
- .manual-grid .manual-row-bottom .manual-col-notes input { width: 100%; }
- .manual-grid .manual-row-bottom .manual-actions {
- flex: 0 0 auto;
- align-self: flex-end;
- padding-bottom: 0;
- }
- .manual-grid .manual-col-date input,
- .manual-grid .manual-col-time input { width: 100%; }
+ .manual-grid .manual-col-device { grid-column: 1 / span 2; grid-row: 2; }
+ .manual-grid .manual-field-sys { grid-column: 3; grid-row: 2; }
+ .manual-grid .manual-field-dia { grid-column: 4; grid-row: 2; }
+ .manual-grid .manual-field-bpm { grid-column: 5; grid-row: 2; }
+ .manual-grid .manual-col-notes { grid-column: 1 / span 5; grid-row: 3; }
+ .manual-grid .manual-actions { grid-column: 6; grid-row: 3; align-self: end; padding-bottom: 0; }
+ .manual-grid input { width: 100%; }
 
  @media (max-width: 700px) {
  .ocr-grid { grid-template-columns: 1fr 1fr; }
@@ -544,12 +538,17 @@
  .ocr-grid .ocr-row-meas { flex-wrap: wrap; }
  .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 100%; }
  .ocr-grid .ocr-row-bottom { flex-wrap: wrap; }
- .manual-grid { grid-template-columns: 1fr 1fr; }
+ .manual-grid {
+ grid-template-columns: 1fr 1fr;
+ }
  .manual-grid .manual-col-date { grid-column: 1; grid-row: auto; }
  .manual-grid .manual-col-time { grid-column: 2; grid-row: auto; }
- .manual-grid .manual-row-meas { flex-wrap: wrap; }
- .manual-grid .manual-row-meas .ocr-col-device { flex: 1 1 100%; }
- .manual-grid .manual-row-bottom { flex-wrap: wrap; }
+ .manual-grid .manual-col-device { grid-column: 1 / -1; grid-row: auto; }
+ .manual-grid .manual-field-sys { grid-column: 1; grid-row: auto; }
+ .manual-grid .manual-field-dia { grid-column: 2; grid-row: auto; }
+ .manual-grid .manual-field-bpm { grid-column: 1 / -1; grid-row: auto; }
+ .manual-grid .manual-col-notes { grid-column: 1 / -1; grid-row: auto; }
+ .manual-grid .manual-actions { grid-column: 1 / -1; grid-row: auto; justify-self: end; }
  }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
@@ -908,16 +907,14 @@
 
  <!-- MANUAL TAB -->
  <div id="pane-manual" style="display:none">
+ <div class="manual-entry-box">
  <div class="manual-grid">
  <div class="ocr-field manual-col-date"><label>Date</label><input type="date" id="m-d" class="dt-input" /></div>
  <div class="ocr-field manual-col-time"><label>Time</label><input type="time" id="m-t" class="dt-input" /></div>
- <div class="manual-row-meas">
- <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" id="m-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" /></div>
- <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" id="m-sys" placeholder="120" min="40" max="300" /></div>
- <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" id="m-dia" placeholder="80" min="20" max="200" /></div>
- <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
- </div>
- <div class="manual-row-bottom">
+ <div class="ocr-field manual-col-device"><label>Device</label><input type="text" id="m-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" /></div>
+ <div class="ocr-field manual-field-sys"><label>Systolic</label><input type="number" id="m-sys" placeholder="120" min="40" max="300" /></div>
+ <div class="ocr-field manual-field-dia"><label>Diastolic</label><input type="number" id="m-dia" placeholder="80" min="20" max="200" /></div>
+ <div class="ocr-field manual-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
  <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
  <div class="manual-actions">
  <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
