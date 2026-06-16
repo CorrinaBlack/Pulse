@@ -1,4 +1,5 @@
-<!-- Pulse v6.24 — 2026-06-15 | Data list default sized to 15 rows (~550px) then scrolls -->
+
+<!-- Pulse v6.25 — 2026-06-15 | Preserve data-list scroll position after edit save and delete (no more snap-to-top) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2300,14 +2301,24 @@ function saveEdit() {
  saveData(records);
  updateDeviceOptions();
  closeModal();
- renderData();
+ renderDataPreserveScroll();
 }
 
 function deleteRecord(id) {
  if (!confirm('Delete this measurement?')) return;
  records = records.filter(r => r.id !== id);
  saveData(records);
+ renderDataPreserveScroll();
+}
+
+// Like renderData() but keeps the data-list scroll position so an edit/delete
+// doesn't snap the user back to the top of a long list.
+function renderDataPreserveScroll() {
+ const oldWrap = document.querySelector('.data-table-wrap');
+ const scrollTop = oldWrap ? oldWrap.scrollTop : 0;
  renderData();
+ const newWrap = document.querySelector('.data-table-wrap');
+ if (newWrap) newWrap.scrollTop = scrollTop;
 }
 
 // Close modal on overlay click
