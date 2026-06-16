@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.25 — 2026-06-15 | Preserve data-list scroll position after edit save and delete (no more snap-to-top) -->
+<!-- Pulse v6.26 — 2026-06-15 | Removed chart legend (colors covered by Avg stat cards); smaller dot radii (Sys 5, Dia 4, BPM 3); removed Filter Range UI entirely -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -541,10 +541,10 @@
  /* STATS */
  .stats-row {
  display: grid;
- grid-template-columns: 1fr 1fr 1fr auto;
+ grid-template-columns: 1fr 1fr 1fr;
  gap: 12px;
  align-items: center;
- margin-bottom: 20px;
+ margin-bottom: 8px;
  }
  .stat-card {
  background: var(--surface2);
@@ -555,23 +555,15 @@
  .stat-label { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
  .stat-value { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--text); }
  .stat-value span { font-size: 14px; color: var(--text3); font-family: 'DM Sans', sans-serif; }
- .stat-cat { font-size: 11px; margin-top: 4px; }
-
- .date-filter { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
- .date-filter label { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; }
- .date-filter input {
- background: var(--surface2);
- border: 1px solid var(--border);
- border-radius: 6px;
- color: var(--text);
+ .stat-cat-row {
  font-family: 'DM Mono', monospace;
- font-size: 12px;
- padding: 6px 10px;
- outline: none;
- width: 140px;
+ font-size: 11px;
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ margin-top: 8px;
+ margin-bottom: 4px;
+ text-align: right;
  }
- .date-filter input:focus { border-color: var(--accent); }
- .date-filter-clear { font-size: 11px; color: var(--accent); cursor: pointer; text-align: right; }
 
  /* CHART */
  .chart-wrap {
@@ -769,7 +761,6 @@
 
  @media (max-width: 600px) {
  .stats-row { grid-template-columns: 1fr 1fr; }
- .date-filter { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; }
  .form-grid { grid-template-columns: 1fr; }
  .cat-grid { grid-template-columns: 1fr 1fr; }
  .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
@@ -994,7 +985,6 @@ function escapeHtml(s) {
  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 let currentSort = { column: 'date', direction: 'desc' };
-let filterStart = null, filterEnd = null;
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -1968,8 +1958,6 @@ function renderData() {
  }
 
  let filtered = records;
- if (filterStart) filtered = filtered.filter(r => new Date(r.dt) >= new Date(filterStart));
- if (filterEnd) filtered = filtered.filter(r => new Date(r.dt) <= new Date(filterEnd + 'T23:59'));
 
  const avgSys = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.sys, 0) / filtered.length) : '--';
  const avgDia = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.dia, 0) / filtered.length) : '--';
@@ -1991,17 +1979,8 @@ function renderData() {
  <div class="stat-label">Avg Heart Rate</div>
  <div class="stat-value" style="color:#5db87a">${avgBpm}<span> bpm</span></div>
  </div>
- <div class="date-filter">
- <label>Filter range</label>
- <div style="display:flex;gap:6px;align-items:center">
- <input type="date" id="fs" value="${filterStart||''}" onchange="setFilter('start',this.value)" />
- <span style="color:var(--text3);font-size:12px">→</span>
- <input type="date" id="fe" value="${filterEnd||''}" onchange="setFilter('end',this.value)" />
  </div>
- ${filterStart||filterEnd ? `<div class="date-filter-clear" onclick="clearFilter()">✕ Clear filter</div>` : ''}
- ${cat ? `<div class="stat-cat" style="color:${cat.color}">● ${cat.label}</div>` : ''}
- </div>
- </div>
+ ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
 
  <div class="chart-wrap">
  <div class="chart-inner">
@@ -2032,17 +2011,6 @@ function renderData() {
 
  renderChart(filtered);
  renderTable(filtered);
-}
-
-function setFilter(which, val) {
- if (which === 'start') filterStart = val || null;
- else filterEnd = val || null;
- renderData();
-}
-
-function clearFilter() {
- filterStart = null; filterEnd = null;
- renderData();
 }
 
 function setSort(column) {
@@ -2173,8 +2141,8 @@ function renderChart(data) {
  borderColor: '#e8624a',
  backgroundColor: 'rgba(232,98,74,0.12)',
  pointBackgroundColor: data.map(r => bpCategory(r.sys,r.dia).color),
- pointRadius: 6,
- pointHoverRadius: 9,
+ pointRadius: 5,
+ pointHoverRadius: 8,
  tension: 0.35,
  fill: true,
  },
@@ -2184,8 +2152,8 @@ function renderChart(data) {
  borderColor: '#6ab8d4',
  backgroundColor: 'rgba(106,184,212,0.07)',
  pointBackgroundColor: '#6ab8d4',
- pointRadius: 5,
- pointHoverRadius: 8,
+ pointRadius: 4,
+ pointHoverRadius: 7,
  tension: 0.35,
  fill: true,
  },
@@ -2195,8 +2163,8 @@ function renderChart(data) {
  borderColor: '#5db87a',
  backgroundColor: 'transparent',
  pointBackgroundColor: '#5db87a',
- pointRadius: 4,
- pointHoverRadius: 7,
+ pointRadius: 3,
+ pointHoverRadius: 6,
  tension: 0.35,
  borderDash: [4,4],
  spanGaps: true,
@@ -2208,13 +2176,7 @@ function renderChart(data) {
  animation: false,
  interaction: { mode: 'index', intersect: false },
  plugins: {
- legend: {
- labels: {
- color: '#a09a94',
- font: { family: 'DM Mono', size: 11 },
- boxWidth: 12,
- }
- },
+ legend: { display: false },
  tooltip: { enabled: false },
  },
  scales: {
