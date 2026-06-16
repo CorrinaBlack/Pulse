@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.32 — 2026-06-15 | Photo Entry Save/Remove buttons now share min-width 80px; Manual Entry gains a 'Clear' button (same width) that wipes all fields and resets Date+Time to now — extracted clearManualForm() reused on save success; Manual Entry Sys/Dia/BPM now stretch from Device's right edge to the right edge of the Clear button -->
+<!-- Pulse v6.33 — 2026-06-16 | Pass 1 bug-fixes from code review: (R1) loadImage's three timeouts now read from CONFIG (NATIVE_DECODE_TIMEOUT_MS, HEIC_CONVERT_TIMEOUT_MS, new CONVERTED_HEIC_LOAD_TIMEOUT_MS); (R2) removed 4 dead URL.revokeObjectURL branches that never matched (item.thumb is always a data URL); (R3) HTML-escaped all user-controlled values in OCR queue template (device, notes, sys/dia/bpm, filename, errorMsg); (R4) replaced two race-prone setTimeout+once handlers with a single managed scheduleTooltipDismiss helper -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1018,6 +1018,7 @@ const CONFIG = {
  IMAGE_LOAD_TIMEOUT_MS: 40000,
  HEIC_CONVERT_TIMEOUT_MS: 30000,
  NATIVE_DECODE_TIMEOUT_MS: 5000,
+ CONVERTED_HEIC_LOAD_TIMEOUT_MS: 10000,
  // OCR pipeline
  MAX_FILES_PER_BATCH: 10,
  BBOX_PADDING_PCT: 0.25, // % padding around Opus bbox in source coords
@@ -1649,9 +1650,6 @@ async function processOcrFile(item, file, apiKey) {
  // Regenerate thumb with the deskewed crop
  try {
  const cropped = renderDeskewed(img, lcdCenterX, lcdCenterY, outSrcW, outSrcH, rotation, null, CONFIG.THUMB_DESKEWED_MAX_DIM);
- if (item.thumb && item.thumb.startsWith('blob:')) {
- try { URL.revokeObjectURL(item.thumb); } catch(e) {}
- }
  item.thumb = cropped.dataUrl;
  item.thumbReady = true;
  renderOCRQueue();
@@ -1734,7 +1732,7 @@ async function loadImage(file) {
  let dataUrl = rawDataUrl;
  let img = await new Promise((resolve) => {
  const i = new Image();
- const timer = setTimeout(() => { console.log('Pulse: native decode timed out'); resolve(null); }, 5000);
+ const timer = setTimeout(() => { console.log('Pulse: native decode timed out'); resolve(null); }, CONFIG.NATIVE_DECODE_TIMEOUT_MS);
  i.onload = () => { clearTimeout(timer); resolve(i); };
  i.onerror = () => { clearTimeout(timer); resolve(null); };
  i.src = rawDataUrl;
@@ -1749,8 +1747,8 @@ async function loadImage(file) {
  let blob = await Promise.race([
  HeicTo({ blob: file, type: 'image/jpeg', quality: 0.92 }),
  new Promise((_, rej) => setTimeout(() => rej(new Error(
- 'HEIC conversion timed out (30s). Please convert to JPG before uploading.'
- )), 30000))
+ 'HEIC conversion timed out (' + Math.round(CONFIG.HEIC_CONVERT_TIMEOUT_MS / 1000) + 's). Please convert to JPG before uploading.'
+ )), CONFIG.HEIC_CONVERT_TIMEOUT_MS))
  ]);
  if (Array.isArray(blob)) blob = blob[0];
  if (!blob || !blob.size) throw new Error('HEIC conversion produced empty result');
@@ -1764,7 +1762,7 @@ async function loadImage(file) {
  });
  img = await new Promise((resolve, reject) => {
  const i = new Image();
- const timer = setTimeout(() => reject(new Error('Converted HEIC image load timed out after 10s')), 10000);
+ const timer = setTimeout(() => reject(new Error('Converted HEIC image load timed out after ' + Math.round(CONFIG.CONVERTED_HEIC_LOAD_TIMEOUT_MS / 1000) + 's')), CONFIG.CONVERTED_HEIC_LOAD_TIMEOUT_MS);
  i.onload = () => { clearTimeout(timer); resolve(i); };
  i.onerror = () => { clearTimeout(timer); reject(new Error('Converted HEIC could not be loaded')); };
  i.src = dataUrl;
@@ -1813,11 +1811,15 @@ function renderOCRQueue() {
  const dupCheck = checkDuplicate(item.dt);
  const isWarn = dupCheck && item.status === 'ready';
  const parts = splitDT(item.dt);
+ // Escape everything that originates from outside our code: filenames, OCR-returned
+ // device strings, user-typed notes, sys/dia/bpm values (already numeric in the
+ // common case but the user can type free text into the field), and error messages.
+ const filename = escapeHtml(item.file?.name || 'Image');
  return `
  <div class="ocr-item ${isWarn ? 'warning' : ''}" id="ocr-${item.qid}">
  <div class="ocr-thumb-wrap">
  ${item.thumbReady && item.thumb
- ? `<img src="${item.thumb}" alt="${item.file?.name || 'image'}" />`
+ ? `<img src="${item.thumb}" alt="${filename}" />`
  : `<div class="thumb-placeholder">
  <div class="spinner-lg"></div>
  <span>${item.status === 'error' ? 'No preview' : 'Processing…'}</span>
@@ -1826,17 +1828,17 @@ function renderOCRQueue() {
  <div class="ocr-body">
  ${item.status === 'ready' ? `
  <div class="ocr-grid">
- <div class="ocr-filename">📋 <span>${item.file?.name || 'Image'}</span></div>
- <div class="ocr-field ocr-col-date"><label>Date</label><input type="date" class="dt-input" value="${parts.d}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
- <div class="ocr-field ocr-col-time"><label>Time</label><input type="time" class="dt-input" value="${parts.t}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
+ <div class="ocr-filename">📋 <span>${filename}</span></div>
+ <div class="ocr-field ocr-col-date"><label>Date</label><input type="date" class="dt-input" value="${escapeHtml(parts.d)}" onchange="updateOCR('${item.qid}','d',this.value)"></div>
+ <div class="ocr-field ocr-col-time"><label>Time</label><input type="time" class="dt-input" value="${escapeHtml(parts.t)}" onchange="updateOCR('${item.qid}','t',this.value)"></div>
  <div class="ocr-row-meas">
- <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" list="deviceOptions" value="${item.device || ''}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
- <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" value="${item.sys}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
- <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" value="${item.dia}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
- <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" value="${item.bpm}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" list="deviceOptions" value="${escapeHtml(item.device || '')}" onchange="updateOCR('${item.qid}','device',this.value)" placeholder="e.g. Omron"></div>
+ <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" value="${escapeHtml(item.sys)}" onchange="updateOCR('${item.qid}','sys',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" value="${escapeHtml(item.dia)}" onchange="updateOCR('${item.qid}','dia',this.value)" placeholder="—"></div>
+ <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" value="${escapeHtml(item.bpm)}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
  </div>
  <div class="ocr-row-bottom">
- <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+ <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${escapeHtml(item.notes)}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
  <div class="ocr-actions">
  <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Save</button>
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
@@ -1846,11 +1848,11 @@ function renderOCRQueue() {
  ` : `
  <div class="ocr-header-row">
  <div class="ocr-filename">
- 📋 <span>${item.file?.name || 'Image'}</span>
+ 📋 <span>${filename}</span>
  </div>
  </div>
  ${item.status === 'processing' ? `<div class="processing-indicator" style="margin-top:8px">Reading values with Opus 4.7…</div>` : ''}
- ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${item.errorMsg || 'Failed to parse image'}</div>` : ''}
+ ${item.status === 'error' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${escapeHtml(item.errorMsg || 'Failed to parse image')}</div>` : ''}
  <div class="ocr-actions-fallback">
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
  </div>
@@ -1884,10 +1886,6 @@ function updateOCR(qid, field, val) {
 }
 
 function removeOCRItem(qid) {
- const item = ocrQueue.find(i => i.qid === qid);
- if (item && item.thumb && item.thumb.startsWith('blob:')) {
- try { URL.revokeObjectURL(item.thumb); } catch(e) {}
- }
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
 }
@@ -1897,9 +1895,6 @@ function commitItem(qid) {
  if (!item) return;
  if (!item.sys || !item.dia) { alert('Please enter at least systolic and diastolic values.'); return; }
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
- if (item.thumb && item.thumb.startsWith('blob:')) {
- try { URL.revokeObjectURL(item.thumb); } catch(e) {}
- }
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
  renderData();
@@ -1910,9 +1905,6 @@ function commitAll() {
  ready.forEach(item => {
  if (item.sys && item.dia) {
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
- }
- if (item.thumb && item.thumb.startsWith('blob:')) {
- try { URL.revokeObjectURL(item.thumb); } catch(e) {}
  }
  });
  ocrQueue = ocrQueue.filter(i => i.status !== 'ready');
@@ -2154,7 +2146,7 @@ function showNotePopup(event, recordId) {
  if (y < 8) y = 8;
  tooltip.style.left = x + 'px';
  tooltip.style.top = y + 'px';
- setTimeout(() => { document.addEventListener('click', hideTooltip, { once: true }); }, 10);
+ scheduleTooltipDismiss();
 }
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
@@ -2269,14 +2261,36 @@ function renderChart(data) {
  if (y + ttRect.height > window.innerHeight - 8) y = window.innerHeight - ttRect.height - 8;
  tooltip.style.left = x + 'px';
  tooltip.style.top = y + 'px';
- setTimeout(() => { document.addEventListener('click', hideTooltip, { once: true }); }, 10);
+ scheduleTooltipDismiss();
  }
  }
  });
 }
 
+// Single managed dismiss-on-next-click handler shared by the chart popup and
+// the notes popup. Calling scheduleTooltipDismiss() removes any previously-
+// registered handler before scheduling a new one, so we never end up with
+// multiple handlers racing each other. The schedule is deferred one tick so
+// the click that *opens* a popup doesn't immediately close it.
+let _dismissTooltipHandler = null;
+function scheduleTooltipDismiss() {
+ if (_dismissTooltipHandler) {
+ document.removeEventListener('click', _dismissTooltipHandler);
+ _dismissTooltipHandler = null;
+ }
+ setTimeout(() => {
+ _dismissTooltipHandler = () => { _dismissTooltipHandler = null; hideTooltip(); };
+ document.addEventListener('click', _dismissTooltipHandler, { once: true });
+ }, 10);
+}
+
 function hideTooltip() {
- document.getElementById('chartTooltip').style.display = 'none';
+ const el = document.getElementById('chartTooltip');
+ if (el) el.style.display = 'none';
+ if (_dismissTooltipHandler) {
+ document.removeEventListener('click', _dismissTooltipHandler);
+ _dismissTooltipHandler = null;
+ }
 }
 
 // ─── EDIT / DELETE ────────────────────────────────────────────────────────────
