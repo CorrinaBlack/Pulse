@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.29 — 2026-06-15 | mmHg/bpm units back inline next to the number; line swatch placed below each card (≈3-digits wide, 48×6); Systolic chart line uses dash-dash-dot pattern [16,6,16,6,2,6] with round caps so the dot renders as a small circle; BPM line picks up round caps too for visual consistency -->
+<!-- Pulse v6.30 — 2026-06-15 | Manual Entry rebuilt to match Photo Entry layout (Date/Time left-aligned, no filename/image-preview block, Device-Sys-Dia-BPM row, Notes + inline Save button); 'Commit' renamed to 'Save' everywhere in Photo Entry (per-item button, queue count text, override-warning, Save All) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -501,6 +501,41 @@
  .ocr-grid .ocr-col-time input,
  .ocr-grid .ocr-col-device input { width: 100%; }
 
+ /* Manual-entry grid — same row structure as ocr-grid but Date/Time are
+ LEFT-aligned (no filename column on the left). Mobile rules mirror ocr-grid. */
+ .manual-grid {
+ display: grid;
+ grid-template-columns: 140px 100px minmax(0, 1fr);
+ column-gap: 10px;
+ row-gap: 8px;
+ align-items: end;
+ }
+ .manual-grid .manual-col-date { grid-column: 1; grid-row: 1; }
+ .manual-grid .manual-col-time { grid-column: 2; grid-row: 1; }
+ .manual-grid .manual-row-meas {
+ grid-column: 1 / -1; grid-row: 2;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .manual-grid .manual-row-meas .ocr-col-device { flex: 1 1 140px; min-width: 0; }
+ .manual-grid .manual-row-meas .ocr-field-sys,
+ .manual-grid .manual-row-meas .ocr-field-dia,
+ .manual-grid .manual-row-meas .ocr-field-bpm { flex: 0 0 90px; }
+ .manual-grid .manual-row-bottom {
+ grid-column: 1 / -1; grid-row: 3;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .manual-grid .manual-row-bottom .manual-col-notes { flex: 1; min-width: 0; }
+ .manual-grid .manual-row-bottom .manual-col-notes input { width: 100%; }
+ .manual-grid .manual-row-bottom .manual-actions {
+ flex: 0 0 auto;
+ align-self: flex-end;
+ padding-bottom: 0;
+ }
+ .manual-grid .manual-col-date input,
+ .manual-grid .manual-col-time input { width: 100%; }
+
  @media (max-width: 700px) {
  .ocr-grid { grid-template-columns: 1fr 1fr; }
  .ocr-grid .ocr-filename { grid-column: 1 / -1; grid-row: auto; }
@@ -509,6 +544,12 @@
  .ocr-grid .ocr-row-meas { flex-wrap: wrap; }
  .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 100%; }
  .ocr-grid .ocr-row-bottom { flex-wrap: wrap; }
+ .manual-grid { grid-template-columns: 1fr 1fr; }
+ .manual-grid .manual-col-date { grid-column: 1; grid-row: auto; }
+ .manual-grid .manual-col-time { grid-column: 2; grid-row: auto; }
+ .manual-grid .manual-row-meas { flex-wrap: wrap; }
+ .manual-grid .manual-row-meas .ocr-col-device { flex: 1 1 100%; }
+ .manual-grid .manual-row-bottom { flex-wrap: wrap; }
  }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
@@ -861,43 +902,28 @@
  <div id="ocrQueue" class="ocr-queue"></div>
  <div id="commitAllBar" class="commit-all-bar" style="display:none">
  <span style="font-size:13px;color:var(--text2)" id="queueCount"></span>
- <button class="btn-commit-all" onclick="commitAll()">Commit All</button>
+ <button class="btn-commit-all" onclick="commitAll()">Save All</button>
  </div>
  </div>
 
  <!-- MANUAL TAB -->
  <div id="pane-manual" style="display:none">
- <div class="form-grid">
- <div class="form-group">
- <label>Systolic (mmHg)</label>
- <input type="number" id="m-sys" placeholder="120" min="40" max="300" />
+ <div class="manual-grid">
+ <div class="ocr-field manual-col-date"><label>Date</label><input type="date" id="m-d" class="dt-input" /></div>
+ <div class="ocr-field manual-col-time"><label>Time</label><input type="time" id="m-t" class="dt-input" /></div>
+ <div class="manual-row-meas">
+ <div class="ocr-field ocr-col-device"><label>Device</label><input type="text" id="m-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" /></div>
+ <div class="ocr-field ocr-field-sys"><label>Systolic</label><input type="number" id="m-sys" placeholder="120" min="40" max="300" /></div>
+ <div class="ocr-field ocr-field-dia"><label>Diastolic</label><input type="number" id="m-dia" placeholder="80" min="20" max="200" /></div>
+ <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
  </div>
- <div class="form-group">
- <label>Diastolic (mmHg)</label>
- <input type="number" id="m-dia" placeholder="80" min="20" max="200" />
- </div>
- <div class="form-group">
- <label>Heart Rate (BPM)</label>
- <input type="number" id="m-bpm" placeholder="72" min="20" max="250" />
- </div>
- <div class="form-group">
- <label>Device</label>
- <input type="text" id="m-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" />
- </div>
- <div class="form-group">
- <label>Date</label>
- <input type="date" id="m-d" class="dt-input" />
- </div>
- <div class="form-group">
- <label>Time</label>
- <input type="time" id="m-t" class="dt-input" />
- </div>
- <div class="form-group form-full">
- <label>Notes (optional)</label>
- <textarea id="m-notes" placeholder="e.g. after exercise, left arm, feeling stressed…"></textarea>
+ <div class="manual-row-bottom">
+ <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
+ <div class="manual-actions">
+ <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
  </div>
  </div>
- <button class="submit-btn" onclick="submitManual()">Save Measurement</button>
+ </div>
  </div>
  </div>
  </div>
@@ -1803,7 +1829,7 @@ function renderOCRQueue() {
  <div class="ocr-row-bottom">
  <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${item.notes}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
  <div class="ocr-actions">
- <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Commit</button>
+ <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Save</button>
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
  </div>
  </div>
@@ -1820,7 +1846,7 @@ function renderOCRQueue() {
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
  </div>
  `}
- ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — committing will override it.</div>` : ''}
+ ${isWarn ? `<div class="ocr-warn">⚠️ An entry already exists at this date/time — saving will override it.</div>` : ''}
  </div>
  </div>`;
  }).join('');
@@ -1828,7 +1854,7 @@ function renderOCRQueue() {
  const ready = ocrQueue.filter(i => i.status === 'ready').length;
  if (ready > 0) {
  bar.style.display = 'flex';
- countEl.textContent = `${ready} item${ready !== 1 ? 's' : ''} ready to commit`;
+ countEl.textContent = `${ready} item${ready !== 1 ? 's' : ''} ready to save`;
  } else {
  bar.style.display = 'none';
  }
