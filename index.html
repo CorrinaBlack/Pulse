@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.31 — 2026-06-15 | Manual Entry refined: now wrapped in a gray card matching Photo Entry items; Device field spans the combined width of Date+Time above it; Sys/Dia/BPM evenly divide remaining width; their right edges and the Notes field right edge all align at the Save-button column boundary; mobile collapses to 2-column layout -->
+<!-- Pulse v6.32 — 2026-06-15 | Photo Entry Save/Remove buttons now share min-width 80px; Manual Entry gains a 'Clear' button (same width) that wipes all fields and resets Date+Time to now — extracted clearManualForm() reused on save success; Manual Entry Sys/Dia/BPM now stretch from Device's right edge to the right edge of the Clear button -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -430,6 +430,8 @@
  border: 1px solid var(--border);
  font-family: 'DM Sans', sans-serif;
  transition: var(--transition);
+ min-width: 80px;
+ text-align: center;
  }
  .btn-commit { background: var(--green); border-color: var(--green); color: white; }
  .btn-commit:hover { opacity: 0.85; }
@@ -501,12 +503,10 @@
  .ocr-grid .ocr-col-time input,
  .ocr-grid .ocr-col-device input { width: 100%; }
 
- /* Manual-entry grid — single grid with 6 columns:
- col 1: 140px (Date) col 2: 100px (Time)
- col 3-5: 3 × 1fr (Sys, Dia, BPM evenly)
- col 6: auto (Save button width — reserved across all rows)
- Device spans cols 1-2 (same as Date+Time combined) and sits under them.
- Notes spans cols 1-5 so its right edge aligns with the right edge of BPM. */
+ /* Manual-entry grid — 5 columns: 140 (Date) / 100 (Time) / 3 × 1fr (Sys, Dia, BPM).
+ Row 1: Date, Time. Row 2: Device (cols 1-2) + Sys/Dia/BPM (cols 3-5).
+ Row 3: a flex row spanning all columns — Notes (flex) + Save + Clear buttons.
+ Sys/Dia/BPM right edge therefore aligns with the right edge of the Clear button. */
  .manual-entry-box {
  background: var(--surface2);
  border: 1px solid var(--border);
@@ -515,7 +515,7 @@
  }
  .manual-grid {
  display: grid;
- grid-template-columns: 140px 100px minmax(70px, 1fr) minmax(70px, 1fr) minmax(70px, 1fr) auto;
+ grid-template-columns: 140px 100px minmax(70px, 1fr) minmax(70px, 1fr) minmax(70px, 1fr);
  column-gap: 10px;
  row-gap: 8px;
  align-items: end;
@@ -526,8 +526,18 @@
  .manual-grid .manual-field-sys { grid-column: 3; grid-row: 2; }
  .manual-grid .manual-field-dia { grid-column: 4; grid-row: 2; }
  .manual-grid .manual-field-bpm { grid-column: 5; grid-row: 2; }
- .manual-grid .manual-col-notes { grid-column: 1 / span 5; grid-row: 3; }
- .manual-grid .manual-actions { grid-column: 6; grid-row: 3; align-self: end; padding-bottom: 0; }
+ .manual-grid .manual-row-bottom {
+ grid-column: 1 / -1; grid-row: 3;
+ display: flex; gap: 10px; align-items: end;
+ min-width: 0;
+ }
+ .manual-grid .manual-row-bottom .manual-col-notes { flex: 1; min-width: 0; }
+ .manual-grid .manual-row-bottom .manual-col-notes input { width: 100%; }
+ .manual-grid .manual-row-bottom .manual-actions {
+ flex: 0 0 auto;
+ align-self: flex-end;
+ display: flex; gap: 8px;
+ }
  .manual-grid input { width: 100%; }
 
  @media (max-width: 700px) {
@@ -547,8 +557,7 @@
  .manual-grid .manual-field-sys { grid-column: 1; grid-row: auto; }
  .manual-grid .manual-field-dia { grid-column: 2; grid-row: auto; }
  .manual-grid .manual-field-bpm { grid-column: 1 / -1; grid-row: auto; }
- .manual-grid .manual-col-notes { grid-column: 1 / -1; grid-row: auto; }
- .manual-grid .manual-actions { grid-column: 1 / -1; grid-row: auto; justify-self: end; }
+ .manual-grid .manual-row-bottom { grid-column: 1 / -1; grid-row: auto; flex-wrap: wrap; }
  }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
@@ -915,9 +924,12 @@
  <div class="ocr-field manual-field-sys"><label>Systolic</label><input type="number" id="m-sys" placeholder="120" min="40" max="300" /></div>
  <div class="ocr-field manual-field-dia"><label>Diastolic</label><input type="number" id="m-dia" placeholder="80" min="20" max="200" /></div>
  <div class="ocr-field manual-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
+ <div class="manual-row-bottom">
  <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
  <div class="manual-actions">
  <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
+ <button class="btn-sm btn-remove" onclick="clearManualForm()">Clear</button>
+ </div>
  </div>
  </div>
  </div>
@@ -1920,6 +1932,14 @@ function submitManual() {
  const notes = document.getElementById('m-notes').value.trim();
  if (!sys || !dia || !dt) { alert('Please enter systolic, diastolic, date, and time.'); return; }
  saveRecord({ sys, dia, bpm, device, dt, notes });
+ clearManualForm();
+ renderData();
+}
+
+// Reset every field in the Manual Entry form: clears Sys/Dia/BPM/Device/Notes
+// and snaps Date+Time back to "right now". Used by both the Clear button and
+// after a successful Save.
+function clearManualForm() {
  document.getElementById('m-sys').value = '';
  document.getElementById('m-dia').value = '';
  document.getElementById('m-bpm').value = '';
@@ -1928,7 +1948,6 @@ function submitManual() {
  const now = splitDT(nowLocalISO());
  document.getElementById('m-d').value = now.d;
  document.getElementById('m-t').value = now.t;
- renderData();
 }
 
 function checkDuplicate(dt) {
