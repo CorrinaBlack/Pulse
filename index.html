@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.27 — 2026-06-15 | Refactor (high-priority items): single CONFIG block (magic numbers); CSS vars + COLORS const for chart colors; callClaude() helper consolidates 3 duplicated API calls; extracted module-scope OCR helpers (encodeCanvas, renderRegion, renderDeskewed, detectLcdBbox, detectCardinalOrientation, extractReading, computeActualLcdDims); slimmed handleFiles from 470 lines to ~30; behavior unchanged -->
+<!-- Pulse v6.28 — 2026-06-15 | Accessibility: Systolic chart line is long-dash (10/5) — three lines now have distinct patterns (long-dash / solid / short-dash) plus colors; each AVG stat card shows a small line sample (color + pattern) between the number and unit; chart popup only triggers on direct dot clicks (intersect:true), clicks elsewhere dismiss -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -557,8 +557,10 @@
  border: 1px solid var(--border);
  }
  .stat-label { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
- .stat-value { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--text); }
+ .stat-value { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--text); line-height: 1.1; }
  .stat-value span { font-size: 14px; color: var(--text3); font-family: 'DM Sans', sans-serif; }
+ .stat-pattern { display: block; margin: 5px 0 3px; }
+ .stat-unit { font-size: 13px; color: var(--text3); font-family: 'DM Sans', sans-serif; line-height: 1; }
  .stat-cat-row {
  font-family: 'DM Mono', monospace;
  font-size: 11px;
@@ -1968,15 +1970,21 @@ function renderData() {
  <div class="stats-row">
  <div class="stat-card">
  <div class="stat-label">Avg Systolic</div>
- <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
+ <div class="stat-value" style="color:var(--c-systolic)">${avgSys}</div>
+ <svg class="stat-pattern" width="48" height="4" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="0" y1="2" x2="48" y2="2" stroke="var(--c-systolic)" stroke-width="2" stroke-dasharray="10 5"/></svg>
+ <div class="stat-unit">mmHg</div>
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Diastolic</div>
- <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
+ <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}</div>
+ <svg class="stat-pattern" width="48" height="4" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="0" y1="2" x2="48" y2="2" stroke="var(--c-diastolic)" stroke-width="2"/></svg>
+ <div class="stat-unit">mmHg</div>
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Heart Rate</div>
- <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
+ <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}</div>
+ <svg class="stat-pattern" width="48" height="4" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="0" y1="2" x2="48" y2="2" stroke="var(--c-bpm)" stroke-width="2" stroke-dasharray="4 4"/></svg>
+ <div class="stat-unit">bpm</div>
  </div>
  </div>
  ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
@@ -2144,6 +2152,7 @@ function renderChart(data) {
  pointHoverRadius: 8,
  tension: 0.35,
  fill: true,
+ borderDash: [10, 5],
  },
  {
  label: 'Diastolic',
@@ -2190,8 +2199,14 @@ function renderChart(data) {
  }
  },
  onClick(evt) {
- const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+ // intersect:true → only register clicks that land ON a dot. Misses bubble
+ // to the document, where the once-listener (set when a tooltip is shown)
+ // dismisses any open tooltip.
+ const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
  if (!pts.length) return;
+ // Stop the click from bubbling so the previous popup's dismiss-handler
+ // doesn't fire on the same click that's opening a new popup.
+ if (evt.native && evt.native.stopPropagation) evt.native.stopPropagation();
  const idx = pts[0].index;
  const r = data[idx];
  const cat = bpCategory(r.sys, r.dia);
