@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.35 — 2026-06-16 | Pass 4 (final medium-priority items): (M4) CSV import now reports per-row errors — each rejection captures row number + reason ("bad date", "bad systolic", etc.), toast shows first 3 row numbers + total, full list logged to console; (M5) batch OCR runs with bounded concurrency (CONFIG.OCR_CONCURRENCY = 3) — submission order preserved in queue, but 3 files process in parallel via a worker pool. With 9 files this is ~3× faster than serial; respects API rate limits -->
+<!-- Pulse v6.36 — 2026-06-16 | Chart x-axis reversed: most recent readings on the left, oldest on the right -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2370,9 +2370,9 @@ function renderChart(series) {
  const canvas = document.getElementById('bpChart');
  if (!canvas || series.length === 0) return;
 
- // Sort chronologically so the line plots left-to-right by time, regardless
- // of `records` insertion order. (records is no longer pre-sorted.)
- const points = [...series].sort((a, b) => new Date(a.dt) - new Date(b.dt));
+ // Sort newest-first (most recent → least recent, left → right). The line still
+ // connects in time order; only the axis direction is flipped.
+ const points = [...series].sort((a, b) => new Date(b.dt) - new Date(a.dt));
 
  const wrap = canvas.parentElement.parentElement;
  const minWidth = Math.max(wrap.clientWidth, points.length * 50);
