@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.33 — 2026-06-16 | Pass 1 bug-fixes from code review: (R1) loadImage's three timeouts now read from CONFIG (NATIVE_DECODE_TIMEOUT_MS, HEIC_CONVERT_TIMEOUT_MS, new CONVERTED_HEIC_LOAD_TIMEOUT_MS); (R2) removed 4 dead URL.revokeObjectURL branches that never matched (item.thumb is always a data URL); (R3) HTML-escaped all user-controlled values in OCR queue template (device, notes, sys/dia/bpm, filename, errorMsg); (R4) replaced two race-prone setTimeout+once handlers with a single managed scheduleTooltipDismiss helper -->
+<!-- Pulse v6.35 — 2026-06-16 | Pass 4 (final medium-priority items): (M4) CSV import now reports per-row errors — each rejection captures row number + reason ("bad date", "bad systolic", etc.), toast shows first 3 row numbers + total, full list logged to console; (M5) batch OCR runs with bounded concurrency (CONFIG.OCR_CONCURRENCY = 3) — submission order preserved in queue, but 3 files process in parallel via a worker pool. With 9 files this is ~3× faster than serial; respects API rate limits -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -569,6 +569,52 @@
  }
  @keyframes spin { to { transform: rotate(360deg); } }
 
+ /* ─── TOAST ───────────────────────────────────────────────────────────── */
+ .toast-container {
+ position: fixed;
+ bottom: 20px;
+ left: 50%;
+ transform: translateX(-50%);
+ z-index: 10000;
+ display: flex;
+ flex-direction: column;
+ gap: 8px;
+ pointer-events: none;
+ max-width: 90vw;
+ width: 420px;
+ }
+ .toast {
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 10px 12px 10px 14px;
+ color: var(--text);
+ font-size: 13px;
+ line-height: 1.45;
+ pointer-events: auto;
+ display: flex;
+ align-items: flex-start;
+ gap: 10px;
+ box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+ animation: toast-in 0.18s ease-out;
+ }
+ .toast.error { border-left: 3px solid var(--red); }
+ .toast.warning { border-left: 3px solid var(--yellow); }
+ .toast.success { border-left: 3px solid var(--green); }
+ .toast.info { border-left: 3px solid var(--accent); }
+ .toast-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; opacity: 0.85; }
+ .toast-msg { flex: 1; white-space: pre-wrap; word-wrap: break-word; min-width: 0; }
+ .toast-close {
+ background: none; border: none; color: var(--text3);
+ cursor: pointer; padding: 0 4px; font-size: 18px; line-height: 1;
+ flex-shrink: 0;
+ }
+ .toast-close:hover { color: var(--text); }
+ @keyframes toast-in {
+ from { opacity: 0; transform: translateY(8px); }
+ to { opacity: 1; transform: translateY(0); }
+ }
+
  /* COMMIT ALL */
  .commit-all-bar {
  display: flex;
@@ -997,6 +1043,9 @@
 <!-- CHART TOOLTIP -->
 <div class="chart-tooltip-popup" id="chartTooltip"></div>
 
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
 <!-- DEVICE NAME OPTIONS (populated dynamically from records) -->
 <datalist id="deviceOptions"></datalist>
 
@@ -1021,6 +1070,7 @@ const CONFIG = {
  CONVERTED_HEIC_LOAD_TIMEOUT_MS: 10000,
  // OCR pipeline
  MAX_FILES_PER_BATCH: 10,
+ OCR_CONCURRENCY: 3, // how many files OCR in parallel (rate-limit-safe)
  BBOX_PADDING_PCT: 0.25, // % padding around Opus bbox in source coords
  PAD_MULT_NORMAL: 1.5, // canvas = LCD × this when actual LCD dims known
  PAD_MULT_FALLBACK: 1.2, // canvas = bbox × this when math falls back to bbox
@@ -1046,14 +1096,34 @@ const COLORS = (() => {
 
 // ─── DATA STORE ───────────────────────────────────────────────────────────────
 const STORAGE_KEY = CONFIG.STORAGE_KEY;
+const DATA_VERSION = 1;
 
 function loadData() {
- try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
- catch { return []; }
+ try {
+ const raw = localStorage.getItem(STORAGE_KEY);
+ if (!raw) return [];
+ const parsed = JSON.parse(raw);
+ // Legacy format: stored as a bare array. Migrate to versioned envelope.
+ if (Array.isArray(parsed)) return migrateData(parsed, 0);
+ // Versioned format: { version, records }
+ return migrateData(parsed.records || [], parsed.version || 0);
+ } catch { return []; }
 }
 
 function saveData(data) {
- localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+ localStorage.setItem(STORAGE_KEY, JSON.stringify({
+ version: DATA_VERSION,
+ records: data,
+ }));
+}
+
+// Schema migration. Add a case for each new DATA_VERSION as the data model
+// changes. Called by loadData() — kept idempotent so re-running is safe.
+function migrateData(records, fromVersion) {
+ let r = records;
+ // Example pattern for future migrations:
+ // if (fromVersion < 1) { r = r.map(rec => ({ ...rec, newField: '' })); }
+ return r;
 }
 
 let records = loadData();
@@ -1066,6 +1136,31 @@ let chartInstance = null;
 function escapeHtml(s) {
  if (s == null) return '';
  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Non-blocking toast notification. Replaces alert() across the app.
+// kind: 'info' | 'success' | 'warning' | 'error'
+// ms: auto-dismiss after this many ms; pass 0 to keep open until user dismisses.
+// Error toasts default to a longer display; the user can always dismiss with ✕.
+function toast(message, kind = 'info', ms) {
+ const container = document.getElementById('toastContainer');
+ if (!container) { console.warn('toast() before container ready:', message); return; }
+ const t = document.createElement('div');
+ t.className = 'toast ' + kind;
+ const icons = { info: 'ℹ', success: '✓', warning: '⚠', error: '✕' };
+ const icon = icons[kind] || icons.info;
+ // textContent for the message body protects against HTML in `message`
+ t.innerHTML = '<span class="toast-icon">' + icon + '</span><div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss">×</button>';
+ t.querySelector('.toast-msg').textContent = message;
+ const remove = () => {
+ t.style.transition = 'opacity 0.18s ease';
+ t.style.opacity = '0';
+ setTimeout(() => t.remove(), 200);
+ };
+ t.querySelector('.toast-close').onclick = remove;
+ container.appendChild(t);
+ const dwell = ms != null ? ms : (kind === 'error' ? 8000 : 5000);
+ if (dwell > 0) setTimeout(remove, dwell);
 }
 let currentSort = { column: 'date', direction: 'desc' };
 
@@ -1247,11 +1342,11 @@ function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
 
 function saveApiKey() {
  const val = document.getElementById('apiKeyInput').value.trim();
- if (!val) { alert('Please enter an API key.'); return; }
+ if (!val) { toast('Please enter an API key.', 'warning'); return; }
  localStorage.setItem(API_KEY_STORAGE, val);
  updateApiKeyBtn();
  toggleApiPanel();
- alert('API key saved.');
+ toast('API key saved.', 'success');
 }
 
 function clearApiKey() {
@@ -1280,9 +1375,18 @@ function toggleApiPanel() {
 }
 
 // ─── CLAUDE API HELPER ────────────────────────────────────────────────────────
+// AbortController registry — every in-flight fetch registers its controller
+// so we can cancel everything when the user closes the tab. processOcrFile
+// also stores a per-item controller so Remove can cancel that item's work.
+const _inflightAborts = new Set();
+window.addEventListener('beforeunload', () => {
+ _inflightAborts.forEach(c => { try { c.abort(); } catch(e) {} });
+});
+
 // Single wrapper for /v1/messages calls. Returns parsed JSON or throws with
-// a useful error message containing status + API error text.
-async function callClaude(apiKey, body) {
+// a useful error message containing status + API error text. Pass an
+// AbortSignal to make the request cancellable.
+async function callClaude(apiKey, body, signal) {
  const res = await fetch(CONFIG.CLAUDE_API_URL, {
  method: 'POST',
  headers: {
@@ -1291,7 +1395,8 @@ async function callClaude(apiKey, body) {
  'anthropic-version': CONFIG.CLAUDE_API_VERSION,
  'anthropic-dangerous-direct-browser-access': 'true'
  },
- body: JSON.stringify(body)
+ body: JSON.stringify(body),
+ signal: signal || undefined,
  });
  if (!res.ok) {
  const err = await res.json().catch(() => ({}));
@@ -1381,7 +1486,7 @@ function renderDeskewed(img, centerX, centerY, srcW, srcH, rotation, filterCss, 
 // ─── OCR PIPELINE STAGES ─────────────────────────────────────────────────────
 // Pass 1: ask Opus where the LCD is. Returns {x, y, w, h, observations} in
 // percent coordinates of the preview image, or null if the call/parse fails.
-async function detectLcdBbox(apiKey, preview) {
+async function detectLcdBbox(apiKey, preview, signal) {
  const data = await callClaude(apiKey, {
  model: CONFIG.CLAUDE_MODEL,
  max_tokens: 500,
@@ -1408,7 +1513,7 @@ async function detectLcdBbox(apiKey, preview) {
  { type: 'text', text: 'Identify the LCD screen on this blood pressure monitor — the rectangular display area where the digital readout (systolic/diastolic/pulse numbers) appears.\n\nIMPORTANT:\n- Capture ONLY the LCD glass area itself (dark/grey for most devices, or blue-backlit for iHealth-type devices). The LCD glass is the inset display panel.\n- EXCLUDE the white/silver plastic bezel and device casing around the LCD.\n- EXCLUDE side labels printed on the bezel (SYS, DIA, PUL/PULSE, mmHg, M/D, MEM, H/M).\n- EXCLUDE physical buttons (ON/OFF, MEM, SET, START/STOP, M1, M2).\n- If the device is tilted in the photo, return the smallest axis-aligned bounding box that fully contains the tilted LCD glass.\n- The bbox should be TIGHT — the LCD glass should fill almost the entire bounding box.' }
  ]
  }]
- });
+ }, signal);
  const toolUse = data.content?.find(b => b.type === 'tool_use');
  if (!toolUse?.input) return null;
  const box = toolUse.input;
@@ -1418,7 +1523,7 @@ async function detectLcdBbox(apiKey, preview) {
 
 // Pass 1.5: ask Opus which cardinal rotation (0/90/180/270 CW) makes the
 // device upright. Returns the integer degrees, or 0 if it can't decide.
-async function detectCardinalOrientation(apiKey, encoded) {
+async function detectCardinalOrientation(apiKey, encoded, signal) {
  const data = await callClaude(apiKey, {
  model: CONFIG.CLAUDE_MODEL,
  max_tokens: 300,
@@ -1450,7 +1555,7 @@ async function detectCardinalOrientation(apiKey, encoded) {
  { type: 'text', text: 'What cardinal rotation is needed to make this BP monitor LCD appear upright? Use the orientation cues to identify which side is naturally UP.' }
  ]
  }]
- });
+ }, signal);
  const tool = data.content?.find(b => b.type === 'tool_use' && b.name === 'set_rotation');
  if (!tool?.input) return { rotation_cw_degrees: 0, observations: 'no tool_use block' };
  return tool.input;
@@ -1458,7 +1563,7 @@ async function detectCardinalOrientation(apiKey, encoded) {
 
 // Pass 2: send the deskewed/cropped image to Opus and parse the BP reading.
 // Returns {systolic, diastolic, bpm, device}, any value may be null.
-async function extractReading(apiKey, encoded) {
+async function extractReading(apiKey, encoded, signal) {
  const data = await callClaude(apiKey, {
  model: CONFIG.CLAUDE_MODEL,
  max_tokens: 200,
@@ -1470,7 +1575,7 @@ async function extractReading(apiKey, encoded) {
  { type: 'text', text: 'Read the SYS, DIA, and PUL/PULSE values from this blood pressure monitor.' }
  ]
  }]
- });
+ }, signal);
  const text = data.content?.find(b => b.type === 'text')?.text || '';
  const m = text.match(/\{[\s\S]*?\}/);
  if (!m) throw new Error('No JSON found. Claude said: "' + text.slice(0, 300) + '"');
@@ -1509,15 +1614,15 @@ setTimeout(updateApiKeyBtn, 100);
 async function handleFiles(files) {
  const apiKey = getApiKey();
  if (!apiKey) {
- alert('Please add your Anthropic API key first — tap ⚙ API Key in the header.');
+ toast('Please add your Anthropic API key first — tap ⚙ API Key in the header.', 'warning');
  return;
  }
  if (!apiKey.startsWith('sk-ant-')) {
- alert('API key doesn\'t look right — it should start with sk-ant-. Check your key in ⚙ API Key.');
+ toast('API key doesn\'t look right — it should start with sk-ant-. Check your key in ⚙ API Key.', 'warning');
  return;
  }
  if (window.location.protocol === 'file:') {
- alert('API calls are blocked when opening this file directly in Chrome.\n\nTo fix, either:\n• Use it at your hosted URL (e.g. GitHub Pages)\n• Run a local server: python3 -m http.server\n  then open http://localhost:8000/pulse.html');
+ toast('API calls are blocked when opening this file directly in Chrome. Use a hosted URL (e.g. GitHub Pages) or run a local server (python3 -m http.server, then open http://localhost:8000/pulse.html).', 'error', 12000);
  return;
  }
  const allowed = ['image/png','image/jpeg','image/jpg','image/heic'];
@@ -1528,55 +1633,81 @@ async function handleFiles(files) {
  const rejected = all.filter(f => !list.includes(f));
  if (rejected.length) {
  const names = rejected.map(f => f.name).join(', ');
- alert('Unsupported file type' + (rejected.length > 1 ? 's' : '') + ': ' + names +
- '\n\nSupported types: PNG, JPG, JPEG, HEIC');
+ toast('Unsupported file type' + (rejected.length > 1 ? 's' : '') + ': ' + names +
+ '. Supported: PNG, JPG, JPEG, HEIC.', 'warning');
  }
  if (list.length === 0) return;
  const toProcess = list.slice(0, CONFIG.MAX_FILES_PER_BATCH);
 
- for (const file of toProcess) {
- const item = { qid: genId(), file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' };
- ocrQueue.push(item);
+ // Add all items to the queue up front so the user sees them as spinners
+ // immediately, in submission order. Then dispatch work to a small pool of
+ // workers — each pulls the next item until the shared queue is empty.
+ const work = toProcess.map(file => ({
+ file,
+ item: { qid: genId(), file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' },
+ }));
+ work.forEach(w => ocrQueue.push(w.item));
  renderOCRQueue();
- await processOcrFile(item, file, apiKey);
+
+ const concurrency = Math.min(CONFIG.OCR_CONCURRENCY, work.length);
+ const queue = work.slice();
+ async function worker() {
+ while (queue.length > 0) {
+ const w = queue.shift();
+ try {
+ await processOcrFile(w.item, w.file, apiKey);
+ } catch (e) {
+ // processOcrFile already records errors on the item; this catches any
+ // unhandled rejection so other workers keep going.
+ console.error('Pulse: unexpected processOcrFile rejection:', e);
+ }
  renderOCRQueue();
  }
+ }
+ await Promise.all(Array.from({ length: concurrency }, worker));
 }
 
-// Process a single image end-to-end: load → bbox → deskew → cardinal → OCR.
-// All errors are caught and surfaced on the item; the loop continues either way.
-async function processOcrFile(item, file, apiKey) {
- // EXIF date for the queue
- const exifDt = await getExifDate(file);
- item.dt = exifDt || nowLocalISO();
-
- try {
- // Load image with overall timeout — catches HEIC conversion hangs
+// ─── OCR PIPELINE ORCHESTRATION ──────────────────────────────────────────────
+// Loads the image with the overall timeout race. Throws on failure or timeout.
+async function loadImageWithTimeout(file) {
  const timeoutPromise = new Promise((_, rej) =>
  setTimeout(() => rej(new Error('Image processing timed out. For HEIC files, please convert to JPG first (on iPhone: Settings → Camera → Formats → Most Compatible).')), CONFIG.IMAGE_LOAD_TIMEOUT_MS)
  );
  const { img } = await Promise.race([loadImage(file), timeoutPromise]);
+ return img;
+}
+
+// Builds a cheap fallback thumbnail and stores it on the item.
+// Used only if the deskewed crop later fails; otherwise the deskewed crop
+// overrides this thumb. Leaves item.thumbReady=false so the spinner keeps
+// showing until the device-shaped thumb is ready.
+function buildFallbackThumb(item, img) {
  const natW = img.naturalWidth, natH = img.naturalHeight;
+ const c = document.createElement('canvas');
+ const scale = Math.min(1, CONFIG.THUMB_FALLBACK_MAX_DIM / Math.max(natW, natH));
+ c.width = Math.round(natW * scale);
+ c.height = Math.round(natH * scale);
+ const cx = c.getContext('2d');
+ cx.imageSmoothingQuality = 'high';
+ cx.drawImage(img, 0, 0, c.width, c.height);
+ item.thumb = c.toDataURL('image/jpeg', 0.75);
+}
 
- // Cheap fallback thumbnail (used only if deskew fails)
- const thumbCanvas = document.createElement('canvas');
- const thumbScale = Math.min(1, CONFIG.THUMB_FALLBACK_MAX_DIM / Math.max(natW, natH));
- thumbCanvas.width = Math.round(natW * thumbScale);
- thumbCanvas.height = Math.round(natH * thumbScale);
- const tctx = thumbCanvas.getContext('2d');
- tctx.imageSmoothingQuality = 'high';
- tctx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
- item.thumb = thumbCanvas.toDataURL('image/jpeg', 0.75);
- // (Spinner stays until deskewed crop is ready.)
-
- // PASS 1: bbox detection with Opus
+// Runs Pass 1 (Opus bbox) + edge-detection rotation + cardinal orientation
+// + LCD-shape math + thumb regeneration. Returns { crop, rotation } so Pass 2
+// can re-render at OCR resolution. crop may be null if bbox detection failed,
+// in which case Pass 2 will use the full image. Mutates item: item._deskew and
+// item.thumb may be updated.
+async function runBboxPipeline(item, img, apiKey, signal) {
+ const natW = img.naturalWidth, natH = img.naturalHeight;
  let crop = null;
  let rotation = 0;
- try {
+
  const preview = renderRegion(img, natW, natH, null, null, CONFIG.BBOX_PREVIEW_MAX_DIM);
  console.log('Pulse: Pass 1 — detecting LCD bbox with Opus 4.7');
- const box = await detectLcdBbox(apiKey, preview);
- if (box) {
+ const box = await detectLcdBbox(apiKey, preview, signal);
+ if (!box) return { crop, rotation };
+
  console.log('Pulse: Opus bbox observations:', box.observations);
  console.log('Pulse: Opus bbox raw:', JSON.stringify({x:box.x, y:box.y, w:box.w, h:box.h}));
 
@@ -1604,9 +1735,8 @@ async function processOcrFile(item, file, apiKey) {
  rotation = detectRotationFromEdges(edgeCanvas);
  } catch(e) { console.log('Pulse: edge detection failed, rotation=0:', e.message); rotation = 0; }
 
- // Cardinal orientation check — uses a small deskewed preview so the device
- // is roughly axis-aligned. Save the deskew rotation BEFORE the cardinal
- // adds 0/90/180/270 — we need it for the actualLCD math below.
+ // Save the deskew rotation BEFORE the cardinal check adds 0/90/180/270 —
+ // we need it for the actualLCD math below.
  const deskewRotation = rotation;
  const lcdCenterX = (box.x + box.w/2) / 100 * natW;
  const lcdCenterY = (box.y + box.h/2) / 100 * natH;
@@ -1618,7 +1748,7 @@ async function processOcrFile(item, file, apiKey) {
  const previewH = lcdH_px * CONFIG.PAD_MULT_NORMAL;
  const cardinalPreview = renderDeskewed(img, lcdCenterX, lcdCenterY, previewW, previewH, rotation, null, CONFIG.CARDINAL_PREVIEW_MAX_DIM);
  console.log('Pulse: cardinal check — asking Opus for orientation correction (tool_use)');
- const cardinal = await detectCardinalOrientation(apiKey, cardinalPreview);
+ const cardinal = await detectCardinalOrientation(apiKey, cardinalPreview, signal);
  console.log('Pulse: cardinal observations:', cardinal.observations);
  console.log('Pulse: cardinal rotation_cw_degrees:', cardinal.rotation_cw_degrees);
  if ([90, 180, 270].includes(cardinal.rotation_cw_degrees)) {
@@ -1655,33 +1785,66 @@ async function processOcrFile(item, file, apiKey) {
  renderOCRQueue();
  } catch(e) { console.log('Pulse: thumb regenerate failed:', e.message); }
 
- // Remember the deskew params so Pass 2 can re-render at OCR resolution
  item._deskew = { cx: lcdCenterX, cy: lcdCenterY, w: outSrcW, h: outSrcH };
- }
- } catch(e) { console.log('Pulse: bbox detection failed, will use full image:', e.message); }
+ return { crop, rotation };
+}
 
- // PASS 2: OCR — try with preprocessing, then retry without it if anything is null
+// Pass 2: Run OCR with grayscale preprocessing. If any value comes back null,
+// retry with original colors and merge. Returns the parsed reading.
+async function runOcrPass(item, img, crop, rotation, apiKey, signal) {
+ const natW = img.naturalWidth, natH = img.naturalHeight;
  console.log('Pulse: Pass 2 — OCR with Opus 4.7' + (item._deskew ? ' (deskewed device-shaped crop)' : ' (full)') + (rotation ? ', rotation=' + rotation + '°' : ''));
+
  const renderForOCR = (filter) => item._deskew
  ? renderDeskewed(img, item._deskew.cx, item._deskew.cy, item._deskew.w, item._deskew.h, rotation, filter, CONFIG.OPUS_MAX_DIM)
  : renderRegion(img, natW, natH, crop, filter, CONFIG.OPUS_MAX_DIM, rotation);
 
- let encoded = renderForOCR('grayscale(1) contrast(1.5) brightness(1.05)');
+ const encoded = renderForOCR('grayscale(1) contrast(1.5) brightness(1.05)');
  console.log('Pulse: attempt 1 — ' + (encoded.b64.length/1e6).toFixed(1) + 'MB ' + encoded.type + ' at ' + encoded.w + 'x' + encoded.h);
- let parsed = await extractReading(apiKey, encoded);
+ let parsed = await extractReading(apiKey, encoded, signal);
 
  if (parsed.systolic == null || parsed.diastolic == null || parsed.bpm == null) {
  console.log('Pulse: null value detected, retrying without preprocessing (original colors)');
  const encoded2 = renderForOCR(null);
  console.log('Pulse: attempt 2 — ' + (encoded2.b64.length/1e6).toFixed(1) + 'MB ' + encoded2.type + ' at ' + encoded2.w + 'x' + encoded2.h);
- const retry = await extractReading(apiKey, encoded2);
+ const retry = await extractReading(apiKey, encoded2, signal);
  parsed = {
  systolic: parsed.systolic != null ? parsed.systolic : retry.systolic,
  diastolic: parsed.diastolic != null ? parsed.diastolic : retry.diastolic,
  bpm: parsed.bpm != null ? parsed.bpm : retry.bpm,
- device: parsed.device || retry.device
+ device: parsed.device || retry.device,
  };
  }
+ return parsed;
+}
+
+// Top-level per-file orchestration. Handles EXIF date, image loading, the
+// bbox pipeline, OCR, and error UX. Each file gets its own AbortController
+// so removeOCRItem can cancel in-flight requests. The controller is also
+// in the global _inflightAborts set so tab close aborts everything.
+async function processOcrFile(item, file, apiKey) {
+ const ctrl = new AbortController();
+ item._abort = ctrl;
+ _inflightAborts.add(ctrl);
+ const signal = ctrl.signal;
+ try {
+ const exifDt = await getExifDate(file);
+ item.dt = exifDt || nowLocalISO();
+
+ const img = await loadImageWithTimeout(file);
+ buildFallbackThumb(item, img);
+
+ let crop = null, rotation = 0;
+ try {
+ const stage = await runBboxPipeline(item, img, apiKey, signal);
+ crop = stage.crop;
+ rotation = stage.rotation;
+ } catch (e) {
+ if (e.name === 'AbortError') throw e;
+ console.log('Pulse: bbox detection failed, will use full image:', e.message);
+ }
+
+ const parsed = await runOcrPass(item, img, crop, rotation, apiKey, signal);
 
  item.sys = parsed.systolic != null ? String(parsed.systolic) : '';
  item.dia = parsed.diastolic != null ? String(parsed.diastolic) : '';
@@ -1690,6 +1853,11 @@ async function processOcrFile(item, file, apiKey) {
  item.status = 'ready';
  item.thumbReady = true;
  } catch(e) {
+ if (e.name === 'AbortError') {
+ // Item was removed mid-processing — nothing to surface
+ console.log('Pulse: processing aborted for', file?.name);
+ return;
+ }
  item.status = 'error';
  item.thumbReady = true;
  console.error('Pulse error:', e);
@@ -1701,6 +1869,9 @@ async function processOcrFile(item, file, apiKey) {
  } else {
  item.errorMsg = e.message || 'Unknown error';
  }
+ } finally {
+ _inflightAborts.delete(ctrl);
+ if (item._abort === ctrl) delete item._abort;
  }
 }
 
@@ -1886,6 +2057,8 @@ function updateOCR(qid, field, val) {
 }
 
 function removeOCRItem(qid) {
+ const item = ocrQueue.find(i => i.qid === qid);
+ if (item && item._abort) { try { item._abort.abort(); } catch(e) {} }
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
 }
@@ -1893,7 +2066,7 @@ function removeOCRItem(qid) {
 function commitItem(qid) {
  const item = ocrQueue.find(i => i.qid === qid);
  if (!item) return;
- if (!item.sys || !item.dia) { alert('Please enter at least systolic and diastolic values.'); return; }
+ if (!item.sys || !item.dia) { toast('Please enter at least systolic and diastolic values.', 'warning'); return; }
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
  ocrQueue = ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
@@ -1922,7 +2095,7 @@ function submitManual() {
  const t = document.getElementById('m-t').value;
  const dt = combineDT(d, t);
  const notes = document.getElementById('m-notes').value.trim();
- if (!sys || !dia || !dt) { alert('Please enter systolic, diastolic, date, and time.'); return; }
+ if (!sys || !dia || !dt) { toast('Please enter systolic, diastolic, date, and time.', 'warning'); return; }
  saveRecord({ sys, dia, bpm, device, dt, notes });
  clearManualForm();
  renderData();
@@ -1977,7 +2150,6 @@ function saveRecord({ sys, dia, bpm, device, dt, notes }) {
  const existing = records.findIndex(r => r.dt === dt);
  if (existing >= 0) { records.splice(existing, 1); }
  records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
- records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
  updateDeviceOptions();
 }
@@ -2150,34 +2322,13 @@ function showNotePopup(event, recordId) {
 }
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
-function renderChart(data) {
- if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
- const canvas = document.getElementById('bpChart');
- if (!canvas || data.length === 0) return;
-
- const wrap = canvas.parentElement.parentElement;
- const minWidth = Math.max(wrap.clientWidth, data.length * 50);
- canvas.parentElement.style.width = minWidth + 'px';
- canvas.style.width = minWidth + 'px';
- canvas.width = minWidth;
-
- const labels = data.map(r => {
- const d = new Date(r.dt);
- return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '\n' +
- d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
- });
-
- chartInstance = new Chart(canvas, {
- type: 'line',
- data: {
- labels,
- datasets: [
- {
+// Static chart config — only the {data, pointBackgroundColor} fields are
+// computed per render. Lifting these out keeps renderChart compact.
+const CHART_DATASET_DEFAULTS = {
+ systolic: {
  label: 'Systolic',
- data: data.map(r => r.sys),
  borderColor: COLORS.systolic,
  backgroundColor: 'rgba(232,98,74,0.12)',
- pointBackgroundColor: data.map(r => bpCategory(r.sys,r.dia).color),
  pointRadius: 5,
  pointHoverRadius: 8,
  tension: 0.35,
@@ -2185,9 +2336,8 @@ function renderChart(data) {
  borderDash: [16, 6, 16, 6, 2, 6],
  borderCapStyle: 'round',
  },
- {
+ diastolic: {
  label: 'Diastolic',
- data: data.map(r => r.dia),
  borderColor: COLORS.diastolic,
  backgroundColor: 'rgba(106,184,212,0.07)',
  pointBackgroundColor: COLORS.diastolic,
@@ -2196,51 +2346,76 @@ function renderChart(data) {
  tension: 0.35,
  fill: true,
  },
- {
+ bpm: {
  label: 'BPM',
- data: data.map(r => r.bpm || null),
  borderColor: COLORS.bpm,
  backgroundColor: 'transparent',
  pointBackgroundColor: COLORS.bpm,
  pointRadius: 3,
  pointHoverRadius: 6,
  tension: 0.35,
- borderDash: [4,4],
+ borderDash: [4, 4],
  borderCapStyle: 'round',
  spanGaps: true,
- }
- ]
  },
+};
+
+const CHART_SCALES = {
+ x: { ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+ y: { ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' }, min: 40 },
+};
+
+function renderChart(series) {
+ if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+ const canvas = document.getElementById('bpChart');
+ if (!canvas || series.length === 0) return;
+
+ // Sort chronologically so the line plots left-to-right by time, regardless
+ // of `records` insertion order. (records is no longer pre-sorted.)
+ const points = [...series].sort((a, b) => new Date(a.dt) - new Date(b.dt));
+
+ const wrap = canvas.parentElement.parentElement;
+ const minWidth = Math.max(wrap.clientWidth, points.length * 50);
+ canvas.parentElement.style.width = minWidth + 'px';
+ canvas.style.width = minWidth + 'px';
+ canvas.width = minWidth;
+
+ const labels = points.map(r => {
+ const d = new Date(r.dt);
+ return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + '\n' +
+ d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+ });
+
+ const datasets = [
+ { ...CHART_DATASET_DEFAULTS.systolic,
+ data: points.map(r => r.sys),
+ pointBackgroundColor: points.map(r => bpCategory(r.sys, r.dia).color) },
+ { ...CHART_DATASET_DEFAULTS.diastolic,
+ data: points.map(r => r.dia) },
+ { ...CHART_DATASET_DEFAULTS.bpm,
+ data: points.map(r => r.bpm || null) },
+ ];
+
+ chartInstance = new Chart(canvas, {
+ type: 'line',
+ data: { labels, datasets },
  options: {
  responsive: false,
  animation: false,
  interaction: { mode: 'index', intersect: false },
- plugins: {
- legend: { display: false },
- tooltip: { enabled: false },
- },
- scales: {
- x: {
- ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 }, maxRotation: 0 },
- grid: { color: 'rgba(255,255,255,0.04)' }
- },
- y: {
- ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 } },
- grid: { color: 'rgba(255,255,255,0.06)' },
- min: 40
- }
- },
+ plugins: { legend: { display: false }, tooltip: { enabled: false } },
+ scales: CHART_SCALES,
  onClick(evt) {
- // intersect:true → only register clicks that land ON a dot. Misses bubble
- // to the document, where the once-listener (set when a tooltip is shown)
- // dismisses any open tooltip.
+ // intersect:true → only register clicks that land ON a dot. Misses
+ // bubble to the document, where the managed dismiss-handler closes
+ // any open tooltip.
  const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
  if (!pts.length) return;
  // Stop the click from bubbling so the previous popup's dismiss-handler
  // doesn't fire on the same click that's opening a new popup.
  if (evt.native && evt.native.stopPropagation) evt.native.stopPropagation();
  const idx = pts[0].index;
- const r = data[idx];
+ const r = points[idx];
  const cat = bpCategory(r.sys, r.dia);
  const tooltip = document.getElementById('chartTooltip');
  const dt = new Date(r.dt);
@@ -2262,8 +2437,8 @@ function renderChart(data) {
  tooltip.style.left = x + 'px';
  tooltip.style.top = y + 'px';
  scheduleTooltipDismiss();
- }
- }
+ },
+ },
  });
 }
 
@@ -2324,10 +2499,9 @@ function saveEdit() {
  const d = document.getElementById('e-d').value;
  const t = document.getElementById('e-t').value;
  const dt = combineDT(d, t);
- if (!dt) { alert('Please enter both date and time.'); return; }
+ if (!dt) { toast('Please enter both date and time.', 'warning'); return; }
  r.dt = dt;
  r.notes = document.getElementById('e-notes').value.trim();
- records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
  updateDeviceOptions();
  closeModal();
@@ -2358,7 +2532,7 @@ document.getElementById('editModal').addEventListener('click', function(e) {
 
 // ─── EXPORT CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
- if (records.length === 0) { alert('No data to export.'); return; }
+ if (records.length === 0) { toast('No data to export.', 'warning'); return; }
  const header = ['Date','Time','Systolic','Diastolic','BPM','Device','Category','Notes'];
  const rows = records.map(r => {
  const d = new Date(r.dt);
@@ -2395,16 +2569,30 @@ function handleCSVImport(e) {
  reader.onload = (ev) => {
  try {
  const result = importCSVText(ev.target.result);
- alert('Import complete: ' + result.added + ' new record' + (result.added===1?'':'s') +
- ', ' + result.skipped + ' duplicate' + (result.skipped===1?'':'s') + ' skipped' +
- (result.errors > 0 ? ', ' + result.errors + ' row' + (result.errors===1?'':'s') + ' rejected (bad format)' : '') + '.');
+ const errCount = result.errors.length;
+ let summary = result.added + ' new record' + (result.added===1?'':'s') +
+ ', ' + result.skipped + ' duplicate' + (result.skipped===1?'':'s') + ' skipped';
+ if (errCount > 0) {
+ // Show first 3 row numbers inline; full detail goes to console.
+ const sampleRows = result.errors.slice(0, 3).map(e => e.row).join(', ');
+ const moreNote = errCount > 3 ? ' …and ' + (errCount - 3) + ' more' : '';
+ summary += ', ' + errCount + ' row' + (errCount===1?'':'s') + ' rejected (row ' + sampleRows + moreNote + ')';
+ console.group('CSV import errors (' + errCount + ' rows)');
+ result.errors.forEach(e => console.log('Row ' + e.row + ': ' + e.reason));
+ console.groupEnd();
+ summary += '. See console for details.';
+ } else {
+ summary += '.';
+ }
+ const kind = errCount > 0 ? 'warning' : (result.added > 0 ? 'success' : 'info');
+ toast('Import complete: ' + summary, kind, errCount > 0 ? 10000 : 5000);
  } catch(err) {
- alert('Import failed: ' + err.message);
+ toast('Import failed: ' + err.message, 'error');
  }
  // Reset so selecting the same file again re-fires onchange
  e.target.value = '';
  };
- reader.onerror = () => alert('Could not read file.');
+ reader.onerror = () => toast('Could not read file.', 'error');
  reader.readAsText(file);
 }
 
@@ -2427,7 +2615,8 @@ function importCSVText(text) {
  }
 
  const existingDts = new Set(records.map(r => r.dt));
- let added = 0, skipped = 0, errors = 0;
+ let added = 0, skipped = 0;
+ const errors = []; // { row, reason } — row numbers are 1-based for the user
  const newRecords = [];
 
  for (let i = 1; i < lines.length; i++) {
@@ -2441,7 +2630,15 @@ function importCSVText(text) {
  const isoTime = parseStrictTime(timeStr);
  const sys = parseInt(sysStr, 10);
  const dia = parseInt(diaStr, 10);
- if (!isoDate || !isoTime || isNaN(sys) || isNaN(dia)) { errors++; continue; }
+
+ // Identify the specific reason rather than dumping every bad row into one bucket.
+ // Reasons accumulate so a row missing both date and systolic shows both.
+ const reasons = [];
+ if (!isoDate) reasons.push('bad date "' + (dateStr || '(empty)') + '" (expect M/D/YYYY)');
+ if (!isoTime) reasons.push('bad time "' + (timeStr || '(empty)') + '" (expect h:MM AM/PM)');
+ if (isNaN(sys)) reasons.push('bad systolic "' + (sysStr || '(empty)') + '"');
+ if (isNaN(dia)) reasons.push('bad diastolic "' + (diaStr || '(empty)') + '"');
+ if (reasons.length) { errors.push({ row: i + 1, reason: reasons.join('; ') }); continue; }
 
  const dt = isoDate + 'T' + isoTime;
  if (existingDts.has(dt)) { skipped++; continue; }
@@ -2458,7 +2655,6 @@ function importCSVText(text) {
 
  if (added > 0) {
  records.push(...newRecords);
- records.sort((a,b) => new Date(a.dt) - new Date(b.dt));
  saveData(records);
  updateDeviceOptions();
  renderData();
