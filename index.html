@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.41 — 2026-06-16 | Photo Entry and Manual Entry: Remove/Save and Clear/Save buttons moved to a new row below Notes; Notes input now spans the full width of its row (previously sharing space with the buttons); buttons remain right-aligned -->
+<!-- Pulse v6.42 — 2026-06-16 | Data list table: vertical scrollbar now offset 33px from the top so it visually starts below the sticky header instead of running through it (Chrome/Safari only — uses ::-webkit-scrollbar-track:vertical margin-top); divider under the sticky header strengthened — was 1px --border, now 2px --text3 (more visible against the dark surface, so rows don't appear to blend into the header as they scroll past) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -699,12 +699,19 @@
  border: 1px solid var(--border);
  border-radius: var(--radius-sm);
  }
+ /* Offset the vertical scrollbar track so it visually starts below the
+ sticky header instead of running through it. Chrome/Safari only — Firefox
+ uses overlay scrollbars + scrollbar-width:thin and ignores this. The 33px
+ matches the rendered thead height (10px font, 16px padding, 2px border). */
+ .data-table-wrap::-webkit-scrollbar-track:vertical { margin-top: 33px; }
  .data-table thead th {
  position: sticky;
  top: 0;
  background: var(--surface);
  z-index: 2;
- box-shadow: 0 1px 0 var(--border);
+ /* Stronger 2px line using --text3 so the header reads as a distinct band
+ and doesn't visually merge with rows scrolling under it. */
+ box-shadow: 0 2px 0 var(--text3);
  }
  .data-table th {
  font-family: 'DM Mono', monospace;
@@ -714,7 +721,8 @@
  color: var(--text3);
  text-align: left;
  padding: 8px 8px;
- border-bottom: 1px solid var(--border);
+ /* border-bottom removed — the sticky th uses box-shadow instead to avoid
+ a doubled line on non-sticky headers. */
  white-space: nowrap;
  }
  .data-table th.sortable {
