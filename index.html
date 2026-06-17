@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.40 — 2026-06-16 | Edit modal title now DM Sans 18px (was DM Serif Display 22px); primary action moved to the rightmost position everywhere — Edit modal (Cancel | Save), Photo Entry queue items (Remove | Save), Manual Entry (Clear | Save); custom showConfirm() dialog replaces the browser's native confirm() for record deletion — centered like the Edit modal, red Delete button, backdrop click and Esc both cancel, Cancel auto-focused for safety -->
+<!-- Pulse v6.41 — 2026-06-16 | Photo Entry and Manual Entry: Remove/Save and Clear/Save buttons moved to a new row below Notes; Notes input now spans the full width of its row (previously sharing space with the buttons); buttons remain right-aligned -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -456,15 +456,16 @@
 
  .ocr-grid .ocr-row-bottom {
  grid-column: 1 / -1; grid-row: 3;
- display: flex; gap: 10px; align-items: end;
  min-width: 0;
  }
- .ocr-grid .ocr-row-bottom .ocr-col-notes { flex: 1; min-width: 0; }
+ .ocr-grid .ocr-row-bottom .ocr-col-notes { min-width: 0; }
  .ocr-grid .ocr-row-bottom .ocr-col-notes input { width: 100%; }
- .ocr-grid .ocr-row-bottom .ocr-actions {
- flex: 0 0 auto;
- align-self: flex-end;
- padding-bottom: 0;
+ .ocr-grid .ocr-actions {
+ grid-column: 1 / -1; grid-row: 4;
+ display: flex;
+ justify-content: flex-end;
+ gap: 8px;
+ margin-top: 4px;
  }
  .ocr-grid .ocr-col-date input,
  .ocr-grid .ocr-col-time input,
@@ -495,15 +496,16 @@
  .manual-grid .manual-field-bpm { grid-column: 5; grid-row: 2; }
  .manual-grid .manual-row-bottom {
  grid-column: 1 / -1; grid-row: 3;
- display: flex; gap: 10px; align-items: end;
  min-width: 0;
  }
- .manual-grid .manual-row-bottom .manual-col-notes { flex: 1; min-width: 0; }
+ .manual-grid .manual-row-bottom .manual-col-notes { min-width: 0; }
  .manual-grid .manual-row-bottom .manual-col-notes input { width: 100%; }
- .manual-grid .manual-row-bottom .manual-actions {
- flex: 0 0 auto;
- align-self: flex-end;
- display: flex; gap: 8px;
+ .manual-grid .manual-actions {
+ grid-column: 1 / -1; grid-row: 4;
+ display: flex;
+ justify-content: flex-end;
+ gap: 8px;
+ margin-top: 4px;
  }
  .manual-grid input { width: 100%; }
 
@@ -514,7 +516,6 @@
  .ocr-grid .ocr-col-time { grid-column: 2; grid-row: auto; }
  .ocr-grid .ocr-row-meas { flex-wrap: wrap; }
  .ocr-grid .ocr-row-meas .ocr-col-device { flex: 1 1 100%; }
- .ocr-grid .ocr-row-bottom { flex-wrap: wrap; }
  .manual-grid {
  grid-template-columns: 1fr 1fr;
  }
@@ -524,7 +525,7 @@
  .manual-grid .manual-field-sys { grid-column: 1; grid-row: auto; }
  .manual-grid .manual-field-dia { grid-column: 2; grid-row: auto; }
  .manual-grid .manual-field-bpm { grid-column: 1 / -1; grid-row: auto; }
- .manual-grid .manual-row-bottom { grid-column: 1 / -1; grid-row: auto; flex-wrap: wrap; }
+ .manual-grid .manual-row-bottom { grid-column: 1 / -1; grid-row: auto; }
  }
  .processing-indicator { display: flex; align-items: center; gap: 8px; color: var(--accent2); font-size: 13px; margin-top: 10px; }
  .spinner {
@@ -994,10 +995,10 @@
  <div class="ocr-field manual-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
  <div class="manual-row-bottom">
  <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
+ </div>
  <div class="manual-actions">
  <button class="btn-sm btn-remove" onclick="clearManualForm()">Clear</button>
  <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
- </div>
  </div>
  </div>
  </div>
@@ -2025,10 +2026,10 @@ function renderOCRQueue() {
  </div>
  <div class="ocr-row-bottom">
  <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${escapeHtml(item.notes)}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+ </div>
  <div class="ocr-actions">
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
  <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Save</button>
- </div>
  </div>
  </div>
  ` : `
