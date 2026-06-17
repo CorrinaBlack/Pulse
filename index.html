@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.39 — 2026-06-16 | (1) Photo Entry: Time column widened from 100→140px so AM/PM is visible by default; Date+Time combined width (290px) now matches Sys+Dia+BPM combined (290px). (2) Manual Entry: same change applied — Time→140px, which auto-widens the Device combo (spanning Date+Time, now 290px). (3) Edit modal rebuilt with the manual-entry-box gray wrapper; new 3-col edit-grid (Date|Time|Device row 1, Sys|Dia|BPM row 2, Notes textarea ~2 lines row 3, Save+Cancel right-aligned row 4); buttons use btn-sm sizing with new .btn-cancel (transparent, accent border on hover); modal max-width widened 460→560px; obsolete form-grid/form-group/form-full CSS removed (~30 lines) -->
+<!-- Pulse v6.40 — 2026-06-16 | Edit modal title now DM Sans 18px (was DM Serif Display 22px); primary action moved to the rightmost position everywhere — Edit modal (Cancel | Save), Photo Entry queue items (Remove | Save), Manual Entry (Clear | Save); custom showConfirm() dialog replaces the browser's native confirm() for record deletion — centered like the Edit modal, red Delete button, backdrop click and Esc both cancel, Cancel auto-focused for safety -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -813,7 +813,7 @@
  width: 100%;
  max-width: 560px;
  }
- .modal h3 { font-family: 'DM Serif Display', serif; font-size: 22px; margin-bottom: 18px; }
+ .modal h3 { font-family: 'DM Sans', sans-serif; font-size: 18px; font-weight: 600; margin-bottom: 18px; }
 
  /* Edit modal layout — mirrors Manual Entry structure but in a 3-column grid:
  Row 1: Date | Time | Device
@@ -856,6 +856,22 @@
  }
  .btn-cancel { background: transparent; color: var(--text2); }
  .btn-cancel:hover { border-color: var(--accent); color: var(--accent); }
+ .btn-danger { background: var(--red); border-color: var(--red); color: white; }
+ .btn-danger:hover { opacity: 0.85; }
+
+ /* Confirm dialog — smaller than the Edit modal, just a question + 2 buttons */
+ .confirm-modal { max-width: 380px; padding: 22px; }
+ .confirm-message {
+ color: var(--text2);
+ font-size: 14px;
+ line-height: 1.5;
+ margin-bottom: 20px;
+ }
+ .confirm-actions {
+ display: flex;
+ justify-content: flex-end;
+ gap: 8px;
+ }
 
  /* NO DATA */
  .no-data-msg {
@@ -979,8 +995,8 @@
  <div class="manual-row-bottom">
  <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
  <div class="manual-actions">
- <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
  <button class="btn-sm btn-remove" onclick="clearManualForm()">Clear</button>
+ <button class="btn-sm btn-commit" onclick="submitManual()">Save</button>
  </div>
  </div>
  </div>
@@ -1019,10 +1035,22 @@
  <div class="ocr-field"><label>BPM</label><input type="number" id="e-bpm" placeholder="72" min="20" max="250" /></div>
  <div class="ocr-field edit-row-notes"><label>Notes</label><textarea id="e-notes" rows="2" placeholder="optional"></textarea></div>
  <div class="edit-row-actions">
- <button class="btn-sm btn-commit" onclick="saveEdit()">Save</button>
  <button class="btn-sm btn-cancel" onclick="closeModal()">Cancel</button>
+ <button class="btn-sm btn-commit" onclick="saveEdit()">Save</button>
  </div>
  </div>
+ </div>
+ </div>
+</div>
+
+<!-- CONFIRMATION DIALOG (centered like the Edit modal) -->
+<div class="modal-overlay" id="confirmModal">
+ <div class="modal confirm-modal">
+ <h3 id="confirmTitle">Confirm</h3>
+ <p id="confirmMessage" class="confirm-message"></p>
+ <div class="confirm-actions">
+ <button class="btn-sm btn-cancel" id="confirmCancelBtn">Cancel</button>
+ <button class="btn-sm btn-danger" id="confirmOkBtn">Confirm</button>
  </div>
  </div>
 </div>
@@ -1998,8 +2026,8 @@ function renderOCRQueue() {
  <div class="ocr-row-bottom">
  <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${escapeHtml(item.notes)}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
  <div class="ocr-actions">
- <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Save</button>
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
+ <button class="btn-sm btn-commit" onclick="commitItem('${item.qid}')">Save</button>
  </div>
  </div>
  </div>
@@ -2506,11 +2534,55 @@ function saveEdit() {
  renderDataPreserveScroll();
 }
 
-function deleteRecord(id) {
- if (!confirm('Delete this measurement?')) return;
+async function deleteRecord(id) {
+ const ok = await showConfirm({
+ title: 'Delete measurement?',
+ message: 'This action cannot be undone.',
+ confirmLabel: 'Delete',
+ });
+ if (!ok) return;
  records = records.filter(r => r.id !== id);
  saveData(records);
  renderDataPreserveScroll();
+}
+
+// Custom confirmation dialog that returns a Promise<boolean>. Replaces the
+// browser's native confirm() with something centered, styled, and async.
+// Backdrop click and Esc key both resolve to false (cancel).
+function showConfirm({ title = 'Confirm', message = '', confirmLabel = 'Confirm' } = {}) {
+ return new Promise(resolve => {
+ const modal = document.getElementById('confirmModal');
+ const okBtn = document.getElementById('confirmOkBtn');
+ const cancelBtn = document.getElementById('confirmCancelBtn');
+ document.getElementById('confirmTitle').textContent = title;
+ document.getElementById('confirmMessage').textContent = message;
+ okBtn.textContent = confirmLabel;
+
+ let resolved = false;
+ const done = (result) => {
+ if (resolved) return;
+ resolved = true;
+ modal.classList.remove('open');
+ okBtn.onclick = null;
+ cancelBtn.onclick = null;
+ modal.onclick = null;
+ document.removeEventListener('keydown', escHandler);
+ resolve(result);
+ };
+ const escHandler = (e) => { if (e.key === 'Escape') done(false); };
+
+ okBtn.onclick = (e) => { e.stopPropagation(); done(true); };
+ cancelBtn.onclick = (e) => { e.stopPropagation(); done(false); };
+ // Click on the backdrop (the overlay itself) cancels; clicks inside the
+ // .modal don't bubble up to here so the dialog stays open.
+ modal.onclick = (e) => { if (e.target === modal) done(false); };
+ document.addEventListener('keydown', escHandler);
+
+ modal.classList.add('open');
+ // Focus the Cancel button by default — safer than auto-focusing the
+ // destructive action.
+ setTimeout(() => cancelBtn.focus(), 30);
+ });
 }
 
 // Like renderData() but keeps the data-list scroll position so an edit/delete
