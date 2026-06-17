@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.38 — 2026-06-16 | Chart x-axis date format updated to "June 5, '26" (full month, day, comma, apostrophe-prefixed 2-digit year); each date still shown only once on the leftmost reading of that day -->
+<!-- Pulse v6.39 — 2026-06-16 | (1) Photo Entry: Time column widened from 100→140px so AM/PM is visible by default; Date+Time combined width (290px) now matches Sys+Dia+BPM combined (290px). (2) Manual Entry: same change applied — Time→140px, which auto-widens the Device combo (spanning Date+Time, now 290px). (3) Edit modal rebuilt with the manual-entry-box gray wrapper; new 3-col edit-grid (Date|Time|Device row 1, Sys|Dia|BPM row 2, Notes textarea ~2 lines row 3, Save+Cancel right-aligned row 4); buttons use btn-sm sizing with new .btn-cancel (transparent, accent border on hover); modal max-width widened 460→560px; obsolete form-grid/form-group/form-full CSS removed (~30 lines) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -275,39 +275,6 @@
  }
  .tab.active { background: var(--accent); border-color: var(--accent); color: white; }
 
- /* MANUAL ENTRY */
- .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
- .form-group { display: flex; flex-direction: column; gap: 6px; }
- .form-group label { font-size: 11px; font-family: 'DM Mono', monospace; color: var(--text2); letter-spacing: 0.8px; text-transform: uppercase; }
- .form-group input, .form-group textarea {
- background: var(--surface2);
- border: 1px solid var(--border);
- border-radius: var(--radius-sm);
- color: var(--text);
- font-family: 'DM Sans', sans-serif;
- font-size: 15px;
- padding: 10px 12px;
- transition: border-color var(--transition);
- outline: none;
- width: 100%;
- }
- .form-group input:focus, .form-group textarea:focus { border-color: var(--accent); }
- .form-group textarea { resize: vertical; min-height: 72px; line-height: 1.45; }
-
- /* Date/time inputs: picker icon on the left */
- .form-group .dt-input { padding-left: 40px; position: relative; }
- .form-group .dt-input::-webkit-calendar-picker-indicator {
- position: absolute;
- left: 10px;
- top: 50%;
- transform: translateY(-50%);
- cursor: pointer;
- opacity: 0.7;
- filter: invert(0.8);
- }
- .form-group .dt-input::-webkit-calendar-picker-indicator:hover { opacity: 1; }
- .form-full { grid-column: 1 / -1; }
-
  .submit-btn {
  background: var(--accent);
  color: white;
@@ -468,7 +435,7 @@
  * Row 3: notes (flex) | commit | remove */
  .ocr-grid {
  display: grid;
- grid-template-columns: minmax(0, 1fr) 140px 100px;
+ grid-template-columns: minmax(0, 1fr) 140px 140px;
  column-gap: 10px;
  row-gap: 8px;
  align-items: end;
@@ -503,8 +470,8 @@
  .ocr-grid .ocr-col-time input,
  .ocr-grid .ocr-col-device input { width: 100%; }
 
- /* Manual-entry grid — 5 columns: 140 (Date) / 100 (Time) / 3 × 1fr (Sys, Dia, BPM).
- Row 1: Date, Time. Row 2: Device (cols 1-2) + Sys/Dia/BPM (cols 3-5).
+ /* Manual-entry grid — 5 columns: 140 (Date) / 140 (Time) / 3 × 1fr (Sys, Dia, BPM).
+ Row 1: Date, Time. Row 2: Device (cols 1-2, spans Date+Time = 290px) + Sys/Dia/BPM (cols 3-5).
  Row 3: a flex row spanning all columns — Notes (flex) + Save + Clear buttons.
  Sys/Dia/BPM right edge therefore aligns with the right edge of the Clear button. */
  .manual-entry-box {
@@ -515,7 +482,7 @@
  }
  .manual-grid {
  display: grid;
- grid-template-columns: 140px 100px minmax(70px, 1fr) minmax(70px, 1fr) minmax(70px, 1fr);
+ grid-template-columns: 140px 140px minmax(70px, 1fr) minmax(70px, 1fr) minmax(70px, 1fr);
  column-gap: 10px;
  row-gap: 8px;
  align-items: end;
@@ -844,12 +811,51 @@
  border-radius: var(--radius);
  padding: 24px;
  width: 100%;
- max-width: 460px;
+ max-width: 560px;
  }
  .modal h3 { font-family: 'DM Serif Display', serif; font-size: 22px; margin-bottom: 18px; }
- .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
- .btn-cancel { background: transparent; border: 1px solid var(--border); color: var(--text2); padding: 9px 18px; border-radius: var(--radius-sm); cursor: pointer; font-family: 'DM Sans', sans-serif; }
- .btn-save { background: var(--accent); border: none; color: white; padding: 9px 18px; border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+
+ /* Edit modal layout — mirrors Manual Entry structure but in a 3-column grid:
+ Row 1: Date | Time | Device
+ Row 2: Systolic | Diastolic | BPM
+ Row 3: Notes (textarea spanning all cols, ~2 lines tall)
+ Row 4: Save / Cancel buttons, right-aligned
+ Lives inside .manual-entry-box so it looks like a single Manual Entry card. */
+ .edit-grid {
+ display: grid;
+ grid-template-columns: 1fr 1fr 1fr;
+ column-gap: 10px;
+ row-gap: 8px;
+ align-items: end;
+ }
+ .edit-grid > .ocr-field input { width: 100%; }
+ .edit-grid .edit-row-notes {
+ grid-column: 1 / -1;
+ }
+ .edit-grid .edit-row-notes textarea {
+ width: 100%;
+ resize: vertical;
+ min-height: 56px;
+ line-height: 1.4;
+ padding: 8px 10px;
+ background: var(--surface);
+ border: 1px solid var(--border);
+ color: var(--text);
+ border-radius: var(--radius-sm);
+ font-family: 'DM Sans', sans-serif;
+ font-size: 13px;
+ box-sizing: border-box;
+ }
+ .edit-grid .edit-row-notes textarea:focus { outline: none; border-color: var(--accent); }
+ .edit-grid .edit-row-actions {
+ grid-column: 1 / -1;
+ display: flex;
+ justify-content: flex-end;
+ gap: 8px;
+ margin-top: 4px;
+ }
+ .btn-cancel { background: transparent; color: var(--text2); }
+ .btn-cancel:hover { border-color: var(--accent); color: var(--accent); }
 
  /* NO DATA */
  .no-data-msg {
@@ -861,7 +867,7 @@
 
  @media (max-width: 600px) {
  .stats-row { grid-template-columns: 1fr 1fr; }
- .form-grid { grid-template-columns: 1fr; }
+ .edit-grid { grid-template-columns: 1fr 1fr; }
  .cat-grid { grid-template-columns: 1fr 1fr; }
  .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
  }
@@ -1003,39 +1009,20 @@
 <div class="modal-overlay" id="editModal">
  <div class="modal">
  <h3>Edit Measurement</h3>
- <div class="form-grid">
- <div class="form-group">
- <label>Systolic</label>
- <input type="number" id="e-sys" />
- </div>
- <div class="form-group">
- <label>Diastolic</label>
- <input type="number" id="e-dia" />
- </div>
- <div class="form-group">
- <label>BPM</label>
- <input type="number" id="e-bpm" />
- </div>
- <div class="form-group">
- <label>Device</label>
- <input type="text" id="e-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" />
- </div>
- <div class="form-group">
- <label>Date</label>
- <input type="date" id="e-d" class="dt-input" />
- </div>
- <div class="form-group">
- <label>Time</label>
- <input type="time" id="e-t" class="dt-input" />
- </div>
- <div class="form-group form-full">
- <label>Notes</label>
- <textarea id="e-notes"></textarea>
+ <div class="manual-entry-box">
+ <div class="edit-grid">
+ <div class="ocr-field"><label>Date</label><input type="date" id="e-d" class="dt-input" /></div>
+ <div class="ocr-field"><label>Time</label><input type="time" id="e-t" class="dt-input" /></div>
+ <div class="ocr-field"><label>Device</label><input type="text" id="e-device" list="deviceOptions" placeholder="e.g. Omron, iHealth…" /></div>
+ <div class="ocr-field"><label>Systolic</label><input type="number" id="e-sys" placeholder="120" min="40" max="300" /></div>
+ <div class="ocr-field"><label>Diastolic</label><input type="number" id="e-dia" placeholder="80" min="20" max="200" /></div>
+ <div class="ocr-field"><label>BPM</label><input type="number" id="e-bpm" placeholder="72" min="20" max="250" /></div>
+ <div class="ocr-field edit-row-notes"><label>Notes</label><textarea id="e-notes" rows="2" placeholder="optional"></textarea></div>
+ <div class="edit-row-actions">
+ <button class="btn-sm btn-commit" onclick="saveEdit()">Save</button>
+ <button class="btn-sm btn-cancel" onclick="closeModal()">Cancel</button>
  </div>
  </div>
- <div class="modal-actions">
- <button class="btn-cancel" onclick="closeModal()">Cancel</button>
- <button class="btn-save" onclick="saveEdit()">Save Changes</button>
  </div>
  </div>
 </div>
