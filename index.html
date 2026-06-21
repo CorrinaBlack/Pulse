@@ -1,4 +1,4 @@
-<!-- Pulse v6.54 — 2026-06-20 | Chart tooltip row color swap + size bump. The Systolic/Diastolic/Heart Rate LABELS are now the muted "AVG SYSTOLIC" color (var(--text3) — light theme #9b948c, dark theme #605a54), and the corresponding NUMBERS take the series colors (red/blue/green) that used to live on the labels. Numbers are also bumped from 12px to 13px ("slightly larger") and the row uses align-items: baseline so the size mismatch sits cleanly. Weight stays at 700 on numbers. The big "116/82" BP header and category-colored square at the top are unchanged from v6.53. -->
+<!-- Pulse v6.55 — 2026-06-20 | Chart tooltip color normalization + BPM label. Previously the tooltip had three different "dark" shades in play (BP header at var(--text), row labels at var(--text3), date at var(--text2)) which all read as "dark gray" but were visibly mismatched. All non-series-colored text now uses var(--text2) so the BP value, the Systolic/Diastolic/BPM labels, the date, and the notes are exactly the same shade. The series-colored numbers (red/blue/green) are unchanged. Also: "Heart Rate" → "BPM" and the redundant " bpm" suffix removed from the BPM value. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -723,7 +723,7 @@
  .chart-tooltip-popup .tt-bp {
  font-family: 'DM Serif Display', serif;
  font-size: 20px;
- color: var(--text);
+ color: var(--text2);
  line-height: 1.1;
  }
  .chart-tooltip-popup .tt-cat-square {
@@ -752,7 +752,7 @@
  gap: 16px;
  font-family: 'DM Mono', monospace;
  font-size: 12px;
- color: var(--text3);
+ color: var(--text2);
  padding: 2px 0;
  }
  .chart-tooltip-popup .tt-row strong { font-size: 13px; font-weight: 700; }
@@ -2774,7 +2774,7 @@ function renderChart(series) {
  <div class="tt-divider"></div>
  <div class="tt-row"><span>Systolic</span> <strong style="color:var(--c-systolic)">${r.sys}</strong></div>
  <div class="tt-row"><span>Diastolic</span> <strong style="color:var(--c-diastolic)">${r.dia}</strong></div>
- ${r.bpm ? `<div class="tt-row"><span>Heart Rate</span> <strong style="color:var(--c-bpm)">${r.bpm} bpm</strong></div>` : ''}
+ ${r.bpm ? `<div class="tt-row"><span>BPM</span> <strong style="color:var(--c-bpm)">${r.bpm}</strong></div>` : ''}
  <div class="tt-divider"></div>
  <div class="tt-meta">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
  ${r.notes ? `<div class="tt-divider tt-divider-notes"></div><div class="tt-notes">${escapeHtml(r.notes)}</div>` : ''}
