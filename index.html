@@ -1,4 +1,4 @@
-<!-- Pulse v6.56 — 2026-06-20 | Table Date & Time sort now drives the chart x-axis direction (roadmap #4a). New state variable chartTimeDirection (default 'desc' = newest-leftmost, matching prior chart behavior) is updated whenever the user toggles the table's Date & Time sort. Clicking other columns (Systolic, Diastolic, etc.) leaves chartTimeDirection alone, so the chart preserves the user's last-expressed time orientation across non-date column sorts. renderChart's points sort now consults chartTimeDirection. Single source of truth for "which way is time running." -->
+<!-- Pulse v6.57 — 2026-06-20 | Multi-select rows filters the chart (roadmap #4b). New leftmost checkbox column on the data table. Checking 1+ rows redraws the chart on just those records (intersection of selected and currently-visible); unchecking all returns to the full visible set. Selected rows get a subtle row-selected highlight. When 1+ are selected, a "selection-bar" appears above the table showing the count and a "Clear Selections" button. State lives in selectedRecordIds (a Set keyed by record ID), so selections survive re-sorts and column changes. Toggling a checkbox calls renderDataPreserveScroll() so the user doesn't get yanked to the top of a long list. Deleting a record or clearing all records also drops the corresponding IDs from the selection. Stat cards (Avg Systolic/Diastolic/Heart Rate) continue to compute on the full visible set — they're a baseline, not a focus narrowing. Mobile media-query selector shifted from nth-child(7) to nth-child(8) since the column count grew by one. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -860,6 +860,51 @@
  }
  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
  .data-table td.mono { font-family: 'DM Mono', monospace; }
+ .data-table .cell-select {
+ width: 36px;
+ padding-left: 12px;
+ padding-right: 4px;
+ }
+ .data-table th.col-select {
+ width: 36px;
+ padding-left: 12px;
+ padding-right: 4px;
+ }
+ .row-checkbox {
+ width: 14px;
+ height: 14px;
+ cursor: pointer;
+ accent-color: var(--accent);
+ margin: 0;
+ vertical-align: middle;
+ }
+ .data-table tr.row-selected td { background: rgba(232,98,74,0.06); }
+ .selection-bar {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ background: rgba(232,98,74,0.08);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 8px 14px;
+ margin-bottom: 12px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ color: var(--text2);
+ }
+ .selection-bar .sel-count strong { color: var(--accent); font-weight: 700; margin-right: 4px; }
+ .btn-clear-selections {
+ background: transparent;
+ border: 1px solid var(--border);
+ border-radius: 6px;
+ color: var(--text);
+ padding: 5px 12px;
+ font-size: 12px;
+ font-family: 'DM Sans', sans-serif;
+ cursor: pointer;
+ transition: var(--transition);
+ }
+ .btn-clear-selections:hover { border-color: var(--accent); color: var(--accent); }
  .bp-badge {
  display: inline-block;
  padding: 2px 8px;
@@ -991,7 +1036,7 @@
  .stats-row { grid-template-columns: 1fr 1fr; }
  .edit-grid { grid-template-columns: 1fr 1fr; }
  .cat-grid { grid-template-columns: 1fr 1fr; }
- .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
+ .data-table th:nth-child(8), .data-table td:nth-child(8) { display: none; }
  }
 </style>
 </head>
@@ -1347,6 +1392,13 @@ let currentSort = { column: 'date', direction: 'desc' };
 // the chart keeps the user's last-expressed time orientation. 'desc' = newest
 // at the left, 'asc' = oldest at the left.
 let chartTimeDirection = 'desc';
+
+// Holds record IDs the user has checkbox-selected in the table. When the set
+// is non-empty, the chart redraws on just those records (intersected with the
+// currently-visible filter set). The set persists across re-sorts since it's
+// keyed by record ID, not row position. Cleared by the "Clear Selections"
+// button that appears above the table when 1+ are selected.
+let selectedRecordIds = new Set();
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -2354,6 +2406,7 @@ async function clearAllRecords() {
  });
  if (!ok) return;
  records = [];
+ selectedRecordIds.clear();
  saveData(records);
  updateDeviceOptions();
  renderData();
@@ -2520,10 +2573,17 @@ function renderData() {
 
  <div style="height:24px"></div>
 
+ ${selectedRecordIds.size > 0 ? `
+ <div class="selection-bar">
+ <span class="sel-count"><strong>${selectedRecordIds.size}</strong>selected — chart shows only these</span>
+ <button class="btn-clear-selections" onclick="clearSelections()">Clear Selections</button>
+ </div>` : ''}
+
  <div class="data-table-wrap">
  <table class="data-table">
  <thead>
  <tr>
+ <th class="col-select"></th>
  <th class="sortable" onclick="setSort('date')">Date &amp; Time ${sortArrow('date')}</th>
  <th class="sortable" onclick="setSort('sys')">Systolic ${sortArrow('sys')}</th>
  <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
@@ -2539,7 +2599,12 @@ function renderData() {
  </div>
  `;
 
- renderChart(filtered);
+ // Chart shows the intersection of selected and currently-visible. When
+ // nothing is selected, chart shows everything visible (current behavior).
+ const chartData = selectedRecordIds.size > 0
+ ? filtered.filter(r => selectedRecordIds.has(r.id))
+ : filtered;
+ renderChart(chartData);
  renderTable(filtered);
 }
 
@@ -2563,6 +2628,20 @@ function sortArrow(column) {
  return currentSort.direction === 'asc'
  ? '<span class="sort-arrow">↑</span>'
  : '<span class="sort-arrow">↓</span>';
+}
+
+// Row-selection helpers — toggle uses renderDataPreserveScroll so checking a
+// row deep in a long list doesn't snap the user back to the top. Clearing
+// removes the selection bar, so a normal renderData is fine.
+function toggleRowSelection(id, checked) {
+ if (checked) selectedRecordIds.add(id);
+ else selectedRecordIds.delete(id);
+ renderDataPreserveScroll();
+}
+
+function clearSelections() {
+ selectedRecordIds.clear();
+ renderData();
 }
 
 function renderTable(filtered) {
@@ -2607,7 +2686,9 @@ function renderTable(filtered) {
  const notesCell = r.notes
  ? `<button class="act-btn act-notes" onclick="showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
  : '';
- return `<tr>
+ const isSelected = selectedRecordIds.has(r.id);
+ return `<tr class="${isSelected ? 'row-selected' : ''}">
+ <td class="cell-select"><input type="checkbox" class="row-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleRowSelection('${r.id}', this.checked)" aria-label="Select reading" /></td>
  <td class="mono">${dtStr}</td>
  <td class="mono">${r.sys}</td>
  <td class="mono">${r.dia}</td>
@@ -2880,6 +2961,7 @@ async function deleteRecord(id) {
  });
  if (!ok) return;
  records = records.filter(r => r.id !== id);
+ selectedRecordIds.delete(id);
  saveData(records);
  renderDataPreserveScroll();
 }
