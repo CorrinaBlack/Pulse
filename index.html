@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.52 — 2026-06-20 | Photo Entry — added direct camera capture for iPad/iPhone. Drop zone restructured: two explicit action buttons ("Choose File" with a document icon, "Take Photo" with a camera icon) replace the click-anywhere browse behavior. Both use hidden file inputs — Choose File accepts the existing image types (multi-select for up to 10), Take Photo uses accept="image/*" capture="environment" so iOS/Android open the rear camera directly. The Take Photo button is hidden on devices without a coarse pointer (typical desktop/laptop) since the capture attribute there either falls back to the file picker or activates the webcam. Drag-and-drop still works in the dashed zone with the dragover highlight retained; the "or drag and drop up to 10 photos at a time" hint sits below the buttons. Input values reset on each pick so the same file/photo can be re-selected. -->
+<!-- Pulse v6.53 — 2026-06-20 | Chart tooltip redesign + menu rename. (1) Tooltip layout: BP value now rendered in default text color (var(--text)) with a small 10×10 category-colored square sitting inline to its right — the square replaces the previous practice of coloring the BP number by category. Three thin horizontal dividers (var(--border)) split the tooltip into: BP+square header / per-series rows / date / notes; the notes divider gets extra vertical breathing room (12px above, 10px below) per the user mockup. (2) Tooltip width: max-width: 320px (close to image 2 reference), min-width removed so empty/short content stays compact. Notes wrap inside that width and clamp at 3 lines with ellipsis (no scroll — tooltips dismiss on next click, so scrolling would be awkward; full notes live in the table). (3) Row numbers (Systolic/Diastolic/Heart Rate values) softened from var(--text) at weight 600 to var(--text2) at weight 700 — same "muted but emphasized" tone as the stat-card label text discussed. (4) Menu rename: "Clear All Records" → "Clear Records" so it fits one line. Internal clearAllRecords() function name unchanged. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -708,16 +708,44 @@
  background: var(--surface3);
  border: 1px solid var(--border);
  border-radius: var(--radius-sm);
- padding: 10px 14px;
+ padding: 12px 14px;
  font-size: 13px;
  pointer-events: none;
  z-index: 999;
  display: none;
- min-width: 160px;
+ max-width: 320px;
  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
  }
- .chart-tooltip-popup .tt-bp { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 2px; }
- .chart-tooltip-popup .tt-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text2); }
+ .chart-tooltip-popup .tt-bp-row {
+ display: flex;
+ align-items: center;
+ gap: 9px;
+ }
+ .chart-tooltip-popup .tt-bp {
+ font-family: 'DM Serif Display', serif;
+ font-size: 20px;
+ color: var(--text);
+ line-height: 1.1;
+ }
+ .chart-tooltip-popup .tt-cat-square {
+ width: 10px;
+ height: 10px;
+ border-radius: 2px;
+ flex-shrink: 0;
+ }
+ .chart-tooltip-popup .tt-divider {
+ height: 1px;
+ background: var(--border);
+ margin: 8px 0;
+ }
+ .chart-tooltip-popup .tt-divider-notes {
+ margin: 12px 0 10px;
+ }
+ .chart-tooltip-popup .tt-meta {
+ font-family: 'DM Mono', monospace;
+ font-size: 11px;
+ color: var(--text2);
+ }
  .chart-tooltip-popup .tt-row {
  display: flex;
  justify-content: space-between;
@@ -726,7 +754,20 @@
  font-size: 12px;
  padding: 2px 0;
  }
- .chart-tooltip-popup .tt-row strong { color: var(--text); font-weight: 600; }
+ .chart-tooltip-popup .tt-row strong { color: var(--text2); font-weight: 700; }
+ .chart-tooltip-popup .tt-notes {
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ color: var(--text2);
+ line-height: 1.4;
+ white-space: pre-wrap;
+ overflow-wrap: break-word;
+ word-break: break-word;
+ display: -webkit-box;
+ -webkit-line-clamp: 3;
+ -webkit-box-orient: vertical;
+ overflow: hidden;
+ }
 
  /* DATA LIST */
  .list-controls {
@@ -985,7 +1026,7 @@
  <div class="menu-divider"></div>
  <button class="menu-item menu-item-danger" onclick="clearAllRecords();closeMenu()">
  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/><path d="M5 6l1 14a1 1 0 001 1h10a1 1 0 001-1l1-14"/></svg>
- <span>Clear All Records</span>
+ <span>Clear Records</span>
  </button>
  </div>
  <!-- BP CATEGORIES POPOVER -->
@@ -2725,12 +2766,17 @@ function renderChart(series) {
  const tooltip = document.getElementById('chartTooltip');
  const dt = new Date(r.dt);
  tooltip.innerHTML = `
- <div class="tt-bp" style="color:${cat.color}">${r.sys}/${r.dia}</div>
+ <div class="tt-bp-row">
+ <div class="tt-bp">${r.sys}/${r.dia}</div>
+ <span class="tt-cat-square" style="background:${cat.color}" title="${escapeHtml(cat.label)}"></span>
+ </div>
+ <div class="tt-divider"></div>
  <div class="tt-row"><span style="color:var(--c-systolic)">Systolic</span> <strong>${r.sys}</strong></div>
  <div class="tt-row"><span style="color:var(--c-diastolic)">Diastolic</span> <strong>${r.dia}</strong></div>
  ${r.bpm ? `<div class="tt-row"><span style="color:var(--c-bpm)">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
- <div class="tt-meta" style="margin-top:6px">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
- ${r.notes ? `<div style="margin-top:6px;font-size:12px;color:var(--text2)">${escapeHtml(r.notes)}</div>` : ''}
+ <div class="tt-divider"></div>
+ <div class="tt-meta">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+ ${r.notes ? `<div class="tt-divider tt-divider-notes"></div><div class="tt-notes">${escapeHtml(r.notes)}</div>` : ''}
  `;
  tooltip.style.display = 'block';
  const ttRect = tooltip.getBoundingClientRect();
