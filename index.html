@@ -1,4 +1,4 @@
-<!-- Pulse v6.57 — 2026-06-20 | Multi-select rows filters the chart (roadmap #4b). New leftmost checkbox column on the data table. Checking 1+ rows redraws the chart on just those records (intersection of selected and currently-visible); unchecking all returns to the full visible set. Selected rows get a subtle row-selected highlight. When 1+ are selected, a "selection-bar" appears above the table showing the count and a "Clear Selections" button. State lives in selectedRecordIds (a Set keyed by record ID), so selections survive re-sorts and column changes. Toggling a checkbox calls renderDataPreserveScroll() so the user doesn't get yanked to the top of a long list. Deleting a record or clearing all records also drops the corresponding IDs from the selection. Stat cards (Avg Systolic/Diastolic/Heart Rate) continue to compute on the full visible set — they're a baseline, not a focus narrowing. Mobile media-query selector shifted from nth-child(7) to nth-child(8) since the column count grew by one. -->
+<!-- Pulse v6.58 — 2026-06-20 | Two UX changes. (1) Sticky y-axis: the chart container was restructured into a flex .chart-section that holds a fixed 38px-wide .chart-yaxis-fixed div outside the horizontal scroll area, plus the existing scrolling .chart-wrap. Chart.js's own y-axis labels (and the axis line) are now hidden — scales.y.ticks.display: false and border.display: false — but grid lines are preserved. After each renderChart() call, the code reads chartInstance.scales.y and renders HTML labels in the fixed area at the correct pixel positions via getPixelForValue(), so the y-axis values stay visible at all times while the chart scrolls horizontally. (2) Date format normalization to MM-DD-YY: chart x-axis labels go from "June 5, '26" to "06-05-26"; table Date & Time column goes from "05/06/26 10:45 PM" to "05-06-26 10:45 PM" (time portion unchanged). Tooltip date format ("Jun 18, 26") is unchanged per scope. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -693,7 +693,31 @@
  }
 
  /* CHART */
+ .chart-section {
+ display: flex;
+ align-items: flex-start;
+ }
+ .chart-yaxis-fixed {
+ width: 38px;
+ height: 200px;
+ position: relative;
+ flex-shrink: 0;
+ background: var(--bg);
+ }
+ .chart-yaxis-fixed .y-tick {
+ position: absolute;
+ right: 6px;
+ font-family: 'DM Mono', monospace;
+ font-size: 10px;
+ color: var(--text3);
+ transform: translateY(-50%);
+ line-height: 1;
+ text-align: right;
+ white-space: nowrap;
+ }
  .chart-wrap {
+ flex: 1;
+ min-width: 0;
  overflow-x: auto;
  overflow-y: visible;
  -webkit-overflow-scrolling: touch;
@@ -2565,9 +2589,12 @@ function renderData() {
  </div>
  ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
 
+ <div class="chart-section">
+ <div class="chart-yaxis-fixed" id="yAxisFixed"></div>
  <div class="chart-wrap">
  <div class="chart-inner">
  <canvas id="bpChart" height="200"></canvas>
+ </div>
  </div>
  </div>
 
@@ -2681,7 +2708,10 @@ function renderTable(filtered) {
  body.innerHTML = sorted.map(r => {
  const dt = new Date(r.dt);
  const cat = bpCategory(r.sys, r.dia);
- const dtStr = dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'}) +
+ const month2 = String(dt.getMonth() + 1).padStart(2, '0');
+ const day2 = String(dt.getDate()).padStart(2, '0');
+ const year2 = String(dt.getFullYear()).slice(-2);
+ const dtStr = month2 + '-' + day2 + '-' + year2 +
  ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
  const notesCell = r.notes
  ? `<button class="act-btn act-notes" onclick="showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
@@ -2794,7 +2824,7 @@ function renderChart(series) {
  };
  const scales = {
  x: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: C.gridX } },
- y: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 } }, grid: { color: C.gridY }, min: 40 },
+ y: { ticks: { display: false }, border: { display: false }, grid: { color: C.gridY }, min: 40 },
  };
 
  // Sort by chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
@@ -2810,18 +2840,16 @@ function renderChart(series) {
  canvas.style.width = minWidth + 'px';
  canvas.width = minWidth;
 
- // Build x-axis labels in "Month D, 'YY" format (e.g. June 5, '26). Locale
- // formatters don't support apostrophe-prefixed year shorthand, so assemble
- // it from parts. Show each date only on the leftmost (first-encountered)
- // reading of that day; subsequent readings on the same date get an empty
- // label to keep the axis uncluttered.
+ // Build x-axis labels in MM-DD-YY format (e.g. 06-05-26). Show each date
+ // only on the leftmost (first-encountered) reading of that day; subsequent
+ // readings on the same date get an empty label to keep the axis uncluttered.
  let lastDateStr = null;
  const labels = points.map(r => {
  const d = new Date(r.dt);
- const monthName = d.toLocaleDateString('en-US', { month: 'long' });
- const day = d.getDate();
+ const month2 = String(d.getMonth() + 1).padStart(2, '0');
+ const day2 = String(d.getDate()).padStart(2, '0');
  const year2 = String(d.getFullYear()).slice(-2);
- const dateStr = monthName + ' ' + day + ", '" + year2;
+ const dateStr = month2 + '-' + day2 + '-' + year2;
  if (dateStr === lastDateStr) return '';
  lastDateStr = dateStr;
  return dateStr;
@@ -2885,6 +2913,19 @@ function renderChart(series) {
  },
  },
  });
+
+ // Populate the fixed (non-scrolling) y-axis area with HTML labels at the
+ // same pixel positions Chart.js would draw them. The chart's own y-axis
+ // ticks/labels are hidden (scales.y.ticks.display = false) but grid lines
+ // are kept, so these labels visually pair with the in-canvas grid.
+ const yAxisHost = document.getElementById('yAxisFixed');
+ if (yAxisHost) {
+ const yScale = chartInstance.scales.y;
+ yAxisHost.innerHTML = yScale.ticks.map(t => {
+ const yPx = yScale.getPixelForValue(t.value);
+ return `<div class="y-tick" style="top:${yPx}px">${t.value}</div>`;
+ }).join('');
+ }
 }
 
 // Single managed dismiss-on-next-click handler shared by the chart popup and
