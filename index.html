@@ -1,5 +1,4 @@
-
-<!-- Pulse v6.53 — 2026-06-20 | Chart tooltip redesign + menu rename. (1) Tooltip layout: BP value now rendered in default text color (var(--text)) with a small 10×10 category-colored square sitting inline to its right — the square replaces the previous practice of coloring the BP number by category. Three thin horizontal dividers (var(--border)) split the tooltip into: BP+square header / per-series rows / date / notes; the notes divider gets extra vertical breathing room (12px above, 10px below) per the user mockup. (2) Tooltip width: max-width: 320px (close to image 2 reference), min-width removed so empty/short content stays compact. Notes wrap inside that width and clamp at 3 lines with ellipsis (no scroll — tooltips dismiss on next click, so scrolling would be awkward; full notes live in the table). (3) Row numbers (Systolic/Diastolic/Heart Rate values) softened from var(--text) at weight 600 to var(--text2) at weight 700 — same "muted but emphasized" tone as the stat-card label text discussed. (4) Menu rename: "Clear All Records" → "Clear Records" so it fits one line. Internal clearAllRecords() function name unchanged. -->
+<!-- Pulse v6.54 — 2026-06-20 | Chart tooltip row color swap + size bump. The Systolic/Diastolic/Heart Rate LABELS are now the muted "AVG SYSTOLIC" color (var(--text3) — light theme #9b948c, dark theme #605a54), and the corresponding NUMBERS take the series colors (red/blue/green) that used to live on the labels. Numbers are also bumped from 12px to 13px ("slightly larger") and the row uses align-items: baseline so the size mismatch sits cleanly. Weight stays at 700 on numbers. The big "116/82" BP header and category-colored square at the top are unchanged from v6.53. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -749,12 +748,14 @@
  .chart-tooltip-popup .tt-row {
  display: flex;
  justify-content: space-between;
+ align-items: baseline;
  gap: 16px;
  font-family: 'DM Mono', monospace;
  font-size: 12px;
+ color: var(--text3);
  padding: 2px 0;
  }
- .chart-tooltip-popup .tt-row strong { color: var(--text2); font-weight: 700; }
+ .chart-tooltip-popup .tt-row strong { font-size: 13px; font-weight: 700; }
  .chart-tooltip-popup .tt-notes {
  font-family: 'DM Mono', monospace;
  font-size: 12px;
@@ -2771,9 +2772,9 @@ function renderChart(series) {
  <span class="tt-cat-square" style="background:${cat.color}" title="${escapeHtml(cat.label)}"></span>
  </div>
  <div class="tt-divider"></div>
- <div class="tt-row"><span style="color:var(--c-systolic)">Systolic</span> <strong>${r.sys}</strong></div>
- <div class="tt-row"><span style="color:var(--c-diastolic)">Diastolic</span> <strong>${r.dia}</strong></div>
- ${r.bpm ? `<div class="tt-row"><span style="color:var(--c-bpm)">Heart Rate</span> <strong>${r.bpm} bpm</strong></div>` : ''}
+ <div class="tt-row"><span>Systolic</span> <strong style="color:var(--c-systolic)">${r.sys}</strong></div>
+ <div class="tt-row"><span>Diastolic</span> <strong style="color:var(--c-diastolic)">${r.dia}</strong></div>
+ ${r.bpm ? `<div class="tt-row"><span>Heart Rate</span> <strong style="color:var(--c-bpm)">${r.bpm} bpm</strong></div>` : ''}
  <div class="tt-divider"></div>
  <div class="tt-meta">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
  ${r.notes ? `<div class="tt-divider tt-divider-notes"></div><div class="tt-notes">${escapeHtml(r.notes)}</div>` : ''}
