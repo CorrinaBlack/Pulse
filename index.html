@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.45 — 2026-06-20 | (1) Hamburger emoji replaced with inline SVG icons (vertical key, ascending bars, swapped tray arrows for Export/Import per request — export arrow goes OUT of the tray, import arrow goes INTO it, with "tray = your data store" as the mental model — and simple trash). Icons use currentColor so they inherit menu-item text color (gray default, red for danger, accent on hover). .menu-item is now flex with an 8px gap. (2) Light theme added: warm cream palette, terracotta accent unchanged, --c-diastolic and --c-bpm tuned darker for chart contrast on white. Default dark; choice persists under localStorage key "pulse_theme". (3) Theme toggle item added at top of hamburger with a sun (when dark — tap to go light) / moon (when light — tap to go dark) icon. (4) An inline boot script in <head> applies the saved theme before first paint so there's no flash. (5) Chart now reads CSS color vars at render time, so toggling theme triggers a redraw with the correct palette automatically. -->
+<!-- Pulse v6.46 — 2026-06-20 | (1) Systolic chart series: translucent rgba fill replaced with the solid systolic color (var(--c-systolic), opaque). Points are now outline-only — transparent inside, 2px var(--bg)-colored stroke so they read clearly against the solid red area regardless of theme. The dashed line pattern is no longer visible against same-color fill; the top edge of the fill IS the line now. Removed the now-unused --c-systolic-fill variable. (2) First-launch onboarding: modal explains photo entry needs an Anthropic API key and how to get one from console.anthropic.com. "Save key" stores it and enables photo entry; "Skip for now" leaves it for later. Detection uses a localStorage flag (pulse_onboarded) — existing users with records or an API key are auto-flagged so no surprise welcome. (3) Photo Entry UI now gates on API key presence: when there's no key, the tab bar disappears entirely and Manual Entry is shown directly. Adding a key via hamburger → API Key re-enables Photo Entry without a reload. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -41,7 +41,6 @@
  --c-systolic: #e8624a;
  --c-diastolic: #6ab8d4;
  --c-bpm: #5db87a;
- --c-systolic-fill: rgba(232,98,74,0.12);
  --c-diastolic-fill: rgba(106,184,212,0.07);
  --chart-grid-x: rgba(255,255,255,0.04);
  --chart-grid-y: rgba(255,255,255,0.06);
@@ -66,7 +65,6 @@
  --text3: #9b948c;
  --c-diastolic: #3a8aaa;
  --c-bpm: #3a8e58;
- --c-systolic-fill: rgba(232,98,74,0.10);
  --c-diastolic-fill: rgba(58,138,170,0.10);
  --chart-grid-x: rgba(0,0,0,0.05);
  --chart-grid-y: rgba(0,0,0,0.07);
@@ -1119,6 +1117,31 @@
  </div>
 </div>
 
+<!-- FIRST-LAUNCH ONBOARDING DIALOG -->
+<div class="modal-overlay" id="onboardModal">
+ <div class="modal" style="max-width: 520px; max-height: 90vh; overflow-y: auto;">
+ <h3>Welcome to BP Pulse</h3>
+ <p style="color: var(--text2); font-size: 14px; line-height: 1.55; margin: 0 0 14px;">Track blood pressure readings over time. Manual entry works without any setup.</p>
+ <p style="color: var(--text2); font-size: 14px; line-height: 1.55; margin: 0 0 18px;">Photo entry parses values directly from a picture of your BP monitor. It needs an Anthropic API key, stored only in your browser and sent only to <span style="font-family: 'DM Mono', monospace; color: var(--text);">api.anthropic.com</span>.</p>
+ <div style="background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 18px;">
+ <div style="font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text3); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1.2px;">How to get one</div>
+ <ol style="color: var(--text2); font-size: 13px; line-height: 1.7; padding-left: 18px; margin: 0;">
+ <li>Sign in at <span style="font-family: 'DM Mono', monospace; color: var(--accent);">console.anthropic.com</span></li>
+ <li>Add a payment method (if you haven't already)</li>
+ <li>Settings → API Keys → Create Key</li>
+ <li>Paste the key below (it starts with <span style="font-family: 'DM Mono', monospace; color: var(--accent);">sk-ant-</span>)</li>
+ </ol>
+ </div>
+ <label style="font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 5px;">Anthropic API key (optional)</label>
+ <input type="password" id="onboardApiKey" placeholder="sk-ant-…" style="width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Mono', monospace; font-size: 13px; padding: 8px 12px; outline: none; margin-bottom: 16px; box-sizing: border-box;" />
+ <div style="display: flex; justify-content: flex-end; gap: 8px;">
+ <button class="btn-sm btn-cancel" onclick="skipOnboarding()">Skip for now</button>
+ <button class="btn-sm btn-commit" onclick="completeOnboarding()">Save key</button>
+ </div>
+ <div style="font-size: 11px; color: var(--text3); margin-top: 14px; text-align: center;">Add or change the key any time via menu → API Key.</div>
+ </div>
+</div>
+
 <!-- CHART TOOLTIP -->
 <div class="chart-tooltip-popup" id="chartTooltip"></div>
 
@@ -1157,6 +1180,7 @@ const CONFIG = {
  STORAGE_KEY: 'pulse_bp_data',
  API_KEY_STORAGE: 'pulse_anthropic_key',
  THEME_STORAGE: 'pulse_theme',
+ ONBOARD_STORAGE: 'pulse_onboarded',
  // Anthropic
  CLAUDE_MODEL: 'claude-opus-4-7',
  CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
@@ -1420,12 +1444,14 @@ function saveApiKey() {
  updateApiKeyBtn();
  toggleApiPanel();
  toast('API key saved.', 'success');
+ updatePhotoEntryVisibility();
 }
 
 function clearApiKey() {
  localStorage.removeItem(API_KEY_STORAGE);
  document.getElementById('apiKeyInput').value = '';
  updateApiKeyBtn();
+ updatePhotoEntryVisibility();
 }
 
 function updateApiKeyBtn() {
@@ -2283,6 +2309,73 @@ function renderThemeToggle() {
  btn.innerHTML = (isLight ? _moonSvg : _sunSvg) + '<span>' + (isLight ? 'Dark theme' : 'Light theme') + '</span>';
 }
 
+// ─── ONBOARDING + PHOTO ENTRY VISIBILITY ─────────────────────────────────────
+// On first launch, surface a modal that explains what the API key is for and
+// how to get one. Skip → no key, photo entry stays hidden. Save → key stored,
+// photo entry appears. Existing users (with records or an API key already in
+// localStorage when v6.46 first loads) are auto-onboarded so they don't get a
+// surprise welcome screen.
+function checkOnboarding() {
+ if (localStorage.getItem(CONFIG.ONBOARD_STORAGE) === 'true') return;
+ if (records.length > 0 || getApiKey()) {
+ localStorage.setItem(CONFIG.ONBOARD_STORAGE, 'true');
+ return;
+ }
+ document.getElementById('onboardModal').classList.add('open');
+ setTimeout(() => { const i = document.getElementById('onboardApiKey'); if (i) i.focus(); }, 80);
+}
+
+function skipOnboarding() {
+ localStorage.setItem(CONFIG.ONBOARD_STORAGE, 'true');
+ document.getElementById('onboardApiKey').value = '';
+ document.getElementById('onboardModal').classList.remove('open');
+ updatePhotoEntryVisibility();
+}
+
+function completeOnboarding() {
+ const key = document.getElementById('onboardApiKey').value.trim();
+ if (key) {
+ if (!key.startsWith('sk-ant-')) {
+ toast('That doesn\'t look like an Anthropic key — it should start with sk-ant-.', 'warning');
+ return;
+ }
+ localStorage.setItem(CONFIG.API_KEY_STORAGE, key);
+ toast('API key saved.', 'success');
+ }
+ localStorage.setItem(CONFIG.ONBOARD_STORAGE, 'true');
+ document.getElementById('onboardApiKey').value = '';
+ document.getElementById('onboardModal').classList.remove('open');
+ updateApiKeyBtn();
+ updatePhotoEntryVisibility();
+}
+
+// Gate the Photo Entry tab on API key presence. Without a key, the entire tab
+// bar is removed and Manual Entry shows directly — no use offering an entry
+// mode that can't function. Re-runs on saveApiKey() and clearApiKey() so the
+// UI reflects key presence in real time. When tabs are hidden, the .active state
+// is cleared on both buttons so the next key-add lands cleanly on Photo Entry.
+function updatePhotoEntryVisibility() {
+ const hasKey = !!getApiKey();
+ const tabs = document.querySelector('.tabs');
+ const photoPane = document.getElementById('pane-photo');
+ const manualPane = document.getElementById('pane-manual');
+ const photoTab = document.getElementById('tab-photo');
+ const manualTab = document.getElementById('tab-manual');
+ if (!tabs || !photoPane || !manualPane || !photoTab || !manualTab) return;
+ if (hasKey) {
+ tabs.style.display = 'flex';
+ if (photoTab.classList.contains('active')) switchTab('photo');
+ else if (manualTab.classList.contains('active')) switchTab('manual');
+ else switchTab('photo');
+ } else {
+ tabs.style.display = 'none';
+ photoTab.classList.remove('active');
+ manualTab.classList.remove('active');
+ photoPane.style.display = 'none';
+ manualPane.style.display = 'block';
+ }
+}
+
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
 function renderData() {
  setEntryAccordion();
@@ -2460,11 +2553,11 @@ function getChartColors() {
  systolic: v('--c-systolic', '#e8624a'),
  diastolic: v('--c-diastolic', '#6ab8d4'),
  bpm: v('--c-bpm', '#5db87a'),
- systolicFill: v('--c-systolic-fill', 'rgba(232,98,74,0.12)'),
  diastolicFill: v('--c-diastolic-fill', 'rgba(106,184,212,0.07)'),
  tickColor: v('--text3', '#605a54'),
  gridX: v('--chart-grid-x', 'rgba(255,255,255,0.04)'),
  gridY: v('--chart-grid-y', 'rgba(255,255,255,0.06)'),
+ bg: v('--bg', '#0f0f11'),
  };
 }
 
@@ -2478,9 +2571,15 @@ function renderChart(series) {
  systolic: {
  label: 'Systolic',
  borderColor: C.systolic,
- backgroundColor: C.systolicFill,
+ backgroundColor: C.systolic,
  pointRadius: 5,
  pointHoverRadius: 8,
+ pointBackgroundColor: 'transparent',
+ pointBorderColor: C.bg,
+ pointBorderWidth: 2,
+ pointHoverBackgroundColor: 'transparent',
+ pointHoverBorderColor: C.bg,
+ pointHoverBorderWidth: 3,
  tension: 0.35,
  fill: true,
  borderDash: [16, 6, 16, 6, 2, 6],
@@ -2543,8 +2642,7 @@ function renderChart(series) {
 
  const datasets = [
  { ...datasetDefaults.systolic,
- data: points.map(r => r.sys),
- pointBackgroundColor: points.map(r => bpCategory(r.sys, r.dia).color) },
+ data: points.map(r => r.sys) },
  { ...datasetDefaults.diastolic,
  data: points.map(r => r.dia) },
  { ...datasetDefaults.bpm,
@@ -2909,6 +3007,8 @@ applyTheme(loadTheme());
 setEntryAccordion();
 updateDeviceOptions();
 renderData();
+updatePhotoEntryVisibility();
+checkOnboarding();
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js"></script>
 </body>
