@@ -1,4 +1,4 @@
-<!-- Pulse v6.55 — 2026-06-20 | Chart tooltip color normalization + BPM label. Previously the tooltip had three different "dark" shades in play (BP header at var(--text), row labels at var(--text3), date at var(--text2)) which all read as "dark gray" but were visibly mismatched. All non-series-colored text now uses var(--text2) so the BP value, the Systolic/Diastolic/BPM labels, the date, and the notes are exactly the same shade. The series-colored numbers (red/blue/green) are unchanged. Also: "Heart Rate" → "BPM" and the redundant " bpm" suffix removed from the BPM value. -->
+<!-- Pulse v6.56 — 2026-06-20 | Table Date & Time sort now drives the chart x-axis direction (roadmap #4a). New state variable chartTimeDirection (default 'desc' = newest-leftmost, matching prior chart behavior) is updated whenever the user toggles the table's Date & Time sort. Clicking other columns (Systolic, Diastolic, etc.) leaves chartTimeDirection alone, so the chart preserves the user's last-expressed time orientation across non-date column sorts. renderChart's points sort now consults chartTimeDirection. Single source of truth for "which way is time running." -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1342,6 +1342,12 @@ function toast(message, kind = 'info', ms) {
 }
 let currentSort = { column: 'date', direction: 'desc' };
 
+// Tracks the chart x-axis time direction independently. Updated whenever the
+// user sorts the table by date; preserved when they sort by other columns so
+// the chart keeps the user's last-expressed time orientation. 'desc' = newest
+// at the left, 'asc' = oldest at the left.
+let chartTimeDirection = 'desc';
+
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
@@ -2546,6 +2552,9 @@ function setSort(column) {
  currentSort.column = column;
  currentSort.direction = 'desc';
  }
+ // Sorting by date drives the chart x-axis direction; other column sorts
+ // leave the chart's time orientation as the user last set it.
+ if (currentSort.column === 'date') chartTimeDirection = currentSort.direction;
  renderData();
 }
 
@@ -2707,9 +2716,12 @@ function renderChart(series) {
  y: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 } }, grid: { color: C.gridY }, min: 40 },
  };
 
- // Sort newest-first (most recent → least recent, left → right). The line still
- // connects in time order; only the axis direction is flipped.
- const points = [...series].sort((a, b) => new Date(b.dt) - new Date(a.dt));
+ // Sort by chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
+ // puts oldest leftmost. This mirrors the table's Date & Time column sort —
+ // see setSort() and the chartTimeDirection state variable.
+ const points = [...series].sort((a, b) => chartTimeDirection === 'desc'
+ ? new Date(b.dt) - new Date(a.dt)
+ : new Date(a.dt) - new Date(b.dt));
 
  const wrap = canvas.parentElement.parentElement;
  const minWidth = Math.max(wrap.clientWidth, points.length * 50);
