@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.46 — 2026-06-20 | (1) Systolic chart series: translucent rgba fill replaced with the solid systolic color (var(--c-systolic), opaque). Points are now outline-only — transparent inside, 2px var(--bg)-colored stroke so they read clearly against the solid red area regardless of theme. The dashed line pattern is no longer visible against same-color fill; the top edge of the fill IS the line now. Removed the now-unused --c-systolic-fill variable. (2) First-launch onboarding: modal explains photo entry needs an Anthropic API key and how to get one from console.anthropic.com. "Save key" stores it and enables photo entry; "Skip for now" leaves it for later. Detection uses a localStorage flag (pulse_onboarded) — existing users with records or an API key are auto-flagged so no surprise welcome. (3) Photo Entry UI now gates on API key presence: when there's no key, the tab bar disappears entirely and Manual Entry is shown directly. Adding a key via hamburger → API Key re-enables Photo Entry without a reload. -->
+<!-- Pulse v6.47 — 2026-06-20 | Chart corrections: (1) Systolic fill is back to translucent (rgba(232,98,74,0.12) in dark, rgba(232,98,74,0.10) in light) — the v6.46 opaque red was the wrong direction; the user wanted a backdrop tint behind the data, not a solid block. (2) Systolic dot styling now matches the v6.45 ring (var(--c-systolic) at 1px width) but with the inside filled in var(--bg) — each dot reads as a bg-colored window in the red backdrop, ringed in the systolic red. Radius 5px / hover 8px unchanged from v6.45. (3) Per-point category-color logic NOT restored — the user explicitly wanted dots outlined (not category-filled). (4) Diastolic and BPM series untouched per user request — including the diastolic translucent blue fill, which means the lower portion of the chart will show some red+blue overlap tinting (as it did in v6.45). -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -41,6 +41,7 @@
  --c-systolic: #e8624a;
  --c-diastolic: #6ab8d4;
  --c-bpm: #5db87a;
+ --c-systolic-fill: rgba(232,98,74,0.12);
  --c-diastolic-fill: rgba(106,184,212,0.07);
  --chart-grid-x: rgba(255,255,255,0.04);
  --chart-grid-y: rgba(255,255,255,0.06);
@@ -65,6 +66,7 @@
  --text3: #9b948c;
  --c-diastolic: #3a8aaa;
  --c-bpm: #3a8e58;
+ --c-systolic-fill: rgba(232,98,74,0.10);
  --c-diastolic-fill: rgba(58,138,170,0.10);
  --chart-grid-x: rgba(0,0,0,0.05);
  --chart-grid-y: rgba(0,0,0,0.07);
@@ -2553,6 +2555,7 @@ function getChartColors() {
  systolic: v('--c-systolic', '#e8624a'),
  diastolic: v('--c-diastolic', '#6ab8d4'),
  bpm: v('--c-bpm', '#5db87a'),
+ systolicFill: v('--c-systolic-fill', 'rgba(232,98,74,0.12)'),
  diastolicFill: v('--c-diastolic-fill', 'rgba(106,184,212,0.07)'),
  tickColor: v('--text3', '#605a54'),
  gridX: v('--chart-grid-x', 'rgba(255,255,255,0.04)'),
@@ -2571,15 +2574,15 @@ function renderChart(series) {
  systolic: {
  label: 'Systolic',
  borderColor: C.systolic,
- backgroundColor: C.systolic,
+ backgroundColor: C.systolicFill,
  pointRadius: 5,
  pointHoverRadius: 8,
- pointBackgroundColor: 'transparent',
- pointBorderColor: C.bg,
- pointBorderWidth: 2,
- pointHoverBackgroundColor: 'transparent',
- pointHoverBorderColor: C.bg,
- pointHoverBorderWidth: 3,
+ pointBackgroundColor: C.bg,
+ pointBorderColor: C.systolic,
+ pointBorderWidth: 1,
+ pointHoverBackgroundColor: C.bg,
+ pointHoverBorderColor: C.systolic,
+ pointHoverBorderWidth: 1,
  tension: 0.35,
  fill: true,
  borderDash: [16, 6, 16, 6, 2, 6],
