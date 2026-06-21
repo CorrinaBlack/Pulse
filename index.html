@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.43 — 2026-06-16 | Reverted v6.42 (scrollbar-track margin trick + 2px text3 box-shadow + removed border-bottom). New approach: thead background changed from --surface to --surface2, the same shade as the AVG SYSTOLIC stat card; that one-shade-lighter band visually separates the header from the darker rows scrolling beneath. Header text color is var(--text3) — same as the "AVG SYSTOLIC" label. Original 1px --border line and th border-bottom restored. -->
+<!-- Pulse v6.44 — 2026-06-20 | Added "Clear All Records" item to the hamburger menu (testing utility). Wipes records only; preserves API key. Standard confirm modal; no-op toast if records are already empty. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -153,6 +153,8 @@
  transition: var(--transition);
  }
  .menu-item:hover { background: var(--surface2); color: var(--accent); }
+ .menu-item-danger { color: var(--red); }
+ .menu-item-danger:hover { background: rgba(232,90,74,0.08); color: var(--red); }
  .menu-divider {
  height: 1px;
  background: var(--border);
@@ -908,6 +910,8 @@
  <div class="menu-divider"></div>
  <button class="menu-item" onclick="exportCSV();closeMenu()">↓ Export CSV</button>
  <button class="menu-item" onclick="triggerImportCSV();closeMenu()">↑ Import CSV</button>
+ <div class="menu-divider"></div>
+ <button class="menu-item menu-item-danger" onclick="clearAllRecords();closeMenu()">🗑 Clear All Records</button>
  </div>
  <!-- BP CATEGORIES POPOVER -->
  <div class="menu-popover" id="categoriesPopover" role="dialog" aria-label="FDA BP Categories">
@@ -2171,6 +2175,25 @@ function saveRecord({ sys, dia, bpm, device, dt, notes }) {
  records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
  saveData(records);
  updateDeviceOptions();
+}
+
+// ─── CLEAR ALL DATA ───────────────────────────────────────────────────────────
+// Hamburger-menu testing utility: wipes the records array; leaves everything else
+// (API key, OCR queue, sort state) alone. Standard confirm dialog gates the action.
+async function clearAllRecords() {
+ const count = records.length;
+ if (count === 0) { toast('No records to clear.', 'info'); return; }
+ const ok = await showConfirm({
+ title: 'Clear all records?',
+ message: 'This will permanently delete all ' + count + ' measurement' + (count === 1 ? '' : 's') + '. Your API key will be kept.',
+ confirmLabel: 'Delete All',
+ });
+ if (!ok) return;
+ records = [];
+ saveData(records);
+ updateDeviceOptions();
+ renderData();
+ toast('All records cleared.', 'success');
 }
 
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
