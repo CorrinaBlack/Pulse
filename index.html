@@ -1,4 +1,5 @@
-<!-- Pulse v6.51 — 2026-06-20 | Onboarding modal copy iteration: dropped "readings" from the lead; "blood pressure monitor" → "BP device" in the manual-vs-photo paragraph; "it needs" → "you need" in the API key disclosure. -->
+
+<!-- Pulse v6.52 — 2026-06-20 | Photo Entry — added direct camera capture for iPad/iPhone. Drop zone restructured: two explicit action buttons ("Choose File" with a document icon, "Take Photo" with a camera icon) replace the click-anywhere browse behavior. Both use hidden file inputs — Choose File accepts the existing image types (multi-select for up to 10), Take Photo uses accept="image/*" capture="environment" so iOS/Android open the rear camera directly. The Take Photo button is hidden on devices without a coarse pointer (typical desktop/laptop) since the capture attribute there either falls back to the file picker or activates the webcam. Drag-and-drop still works in the dashed zone with the dragover highlight retained; the "or drag and drop up to 10 photos at a time" hint sits below the buttons. Input values reset on each pick so the same file/photo can be re-selected. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -336,19 +337,38 @@
  border-radius: var(--radius);
  padding: 36px 20px;
  text-align: center;
- cursor: pointer;
  transition: border-color var(--transition), background var(--transition);
  position: relative;
  }
  .drop-zone.drop-zone-compact { padding: 16px 20px; }
- .drop-zone:hover, .drop-zone.dragover {
+ .drop-zone.dragover {
  border-color: var(--accent);
  background: rgba(232,98,74,0.05);
  }
- .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; color: transparent; }
- .drop-zone .dz-icon { font-size: 32px; margin-bottom: 10px; }
- .drop-zone p { color: var(--text2); font-size: 14px; }
- .drop-zone span { color: var(--accent); }
+ .dz-actions {
+ display: flex;
+ gap: 10px;
+ justify-content: center;
+ flex-wrap: wrap;
+ margin-bottom: 10px;
+ }
+ .dz-btn {
+ display: inline-flex;
+ align-items: center;
+ gap: 7px;
+ background: var(--surface2);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ color: var(--text);
+ padding: 8px 14px;
+ font-size: 13px;
+ font-family: 'DM Sans', sans-serif;
+ cursor: pointer;
+ transition: border-color var(--transition), color var(--transition), background var(--transition);
+ }
+ .dz-btn:hover { border-color: var(--accent); color: var(--accent); }
+ .dz-btn-icon { width: 16px; height: 16px; flex-shrink: 0; }
+ .dz-hint { color: var(--text3); font-size: 12px; margin: 0; }
  .photo-hint { font-size: 12px; color: var(--text3); margin-top: 8px; }
 
  /* OCR QUEUE */
@@ -1035,8 +1055,25 @@
  <!-- PHOTO TAB -->
  <div id="pane-photo">
  <div class="drop-zone drop-zone-compact" id="dropZone">
- <input type="file" accept=".png,.jpg,.jpeg,.heic,image/heic" multiple id="fileInput" onchange="handleFiles(this.files)" />
- <p>Drag and drop or <span>browse</span> to upload up to 10 photos at a time.</p>
+ <input type="file" accept=".png,.jpg,.jpeg,.heic,image/heic" multiple id="fileInput" onchange="handleFiles(this.files); this.value='';" style="display:none" />
+ <input type="file" accept="image/*" capture="environment" id="cameraInput" onchange="handleFiles(this.files); this.value='';" style="display:none" />
+ <div class="dz-actions">
+ <button type="button" class="dz-btn" onclick="document.getElementById('fileInput').click()">
+ <svg class="dz-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+ <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+ <polyline points="14 2 14 8 20 8"/>
+ </svg>
+ Choose File
+ </button>
+ <button type="button" class="dz-btn" id="cameraBtn" onclick="document.getElementById('cameraInput').click()">
+ <svg class="dz-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+ <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+ <circle cx="12" cy="13" r="4"/>
+ </svg>
+ Take Photo
+ </button>
+ </div>
+ <p class="dz-hint">or drag and drop up to 10 photos at a time</p>
  </div>
  <div id="ocrQueue" class="ocr-queue"></div>
  <div id="commitAllBar" class="commit-all-bar" style="display:none">
@@ -2378,6 +2415,18 @@ function updatePhotoEntryVisibility() {
  }
 }
 
+// Hide the Take Photo button on devices without a coarse pointer (typical
+// desktop/laptop with a mouse). On iOS/Android/iPadOS the camera capture
+// attribute opens the camera directly; on desktop browsers it would either
+// fall back to a file picker (redundant with Choose File) or activate the
+// webcam, neither of which is useful here.
+function updateCameraButtonVisibility() {
+ const btn = document.getElementById('cameraBtn');
+ if (!btn) return;
+ const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+ btn.style.display = isTouch ? 'inline-flex' : 'none';
+}
+
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
 function renderData() {
  setEntryAccordion();
@@ -3011,6 +3060,7 @@ setEntryAccordion();
 updateDeviceOptions();
 renderData();
 updatePhotoEntryVisibility();
+updateCameraButtonVisibility();
 checkOnboarding();
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js"></script>
