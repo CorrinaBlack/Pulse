@@ -1,5 +1,5 @@
 
-<!-- Pulse v6.44 — 2026-06-20 | Added "Clear All Records" item to the hamburger menu (testing utility). Wipes records only; preserves API key. Standard confirm modal; no-op toast if records are already empty. -->
+<!-- Pulse v6.45 — 2026-06-20 | (1) Hamburger emoji replaced with inline SVG icons (vertical key, ascending bars, swapped tray arrows for Export/Import per request — export arrow goes OUT of the tray, import arrow goes INTO it, with "tray = your data store" as the mental model — and simple trash). Icons use currentColor so they inherit menu-item text color (gray default, red for danger, accent on hover). .menu-item is now flex with an 8px gap. (2) Light theme added: warm cream palette, terracotta accent unchanged, --c-diastolic and --c-bpm tuned darker for chart contrast on white. Default dark; choice persists under localStorage key "pulse_theme". (3) Theme toggle item added at top of hamburger with a sun (when dark — tap to go light) / moon (when light — tap to go dark) icon. (4) An inline boot script in <head> applies the saved theme before first paint so there's no flash. (5) Chart now reads CSS color vars at render time, so toggling theme triggers a redraw with the correct palette automatically. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,6 +9,15 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+<script>
+ // Apply saved theme BEFORE first paint to avoid a dark→light flash on light-theme
+ // sessions. Literal 'pulse_theme' duplicates CONFIG.THEME_STORAGE below — kept in
+ // sync by hand because CONFIG isn't defined yet at this point in load order.
+ (function(){
+ try { if (localStorage.getItem('pulse_theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); }
+ catch(e) {}
+ })();
+</script>
 
 <style>
  :root {
@@ -27,13 +36,40 @@
  --orange: #e8924a;
  --red: #e85a4a;
  --purple: #9a6ae8;
- /* Chart series colors — single source of truth, mirrored in JS as COLORS */
+ /* Chart series colors — read inside renderChart() at render time so theme
+ changes redraw the chart with the correct palette without manual cache busts. */
  --c-systolic: #e8624a;
  --c-diastolic: #6ab8d4;
  --c-bpm: #5db87a;
+ --c-systolic-fill: rgba(232,98,74,0.12);
+ --c-diastolic-fill: rgba(106,184,212,0.07);
+ --chart-grid-x: rgba(255,255,255,0.04);
+ --chart-grid-y: rgba(255,255,255,0.06);
  --radius: 12px;
  --radius-sm: 8px;
  --transition: 0.2s ease;
+ }
+
+ /* Light theme — warm cream palette. Terracotta accent + category colors unchanged
+ (they hit usable contrast on cream). Diastolic and BPM chart series shifted to
+ darker shades to stay legible against white-ish surfaces. Activated by setting
+ [data-theme="light"] on <html>; the inline boot script in <head> applies the
+ saved preference before first paint so there's no flash. */
+ :root[data-theme="light"] {
+ --bg: #faf7f2;
+ --surface: #ffffff;
+ --surface2: #f6f1e7;
+ --surface3: #ece5d2;
+ --border: #d9d2c0;
+ --text: #2a2620;
+ --text2: #6b665f;
+ --text3: #9b948c;
+ --c-diastolic: #3a8aaa;
+ --c-bpm: #3a8e58;
+ --c-systolic-fill: rgba(232,98,74,0.10);
+ --c-diastolic-fill: rgba(58,138,170,0.10);
+ --chart-grid-x: rgba(0,0,0,0.05);
+ --chart-grid-y: rgba(0,0,0,0.07);
  }
 
  * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -139,7 +175,9 @@
  }
  .hamburger-menu.open { display: block; }
  .menu-item {
- display: block;
+ display: flex;
+ align-items: center;
+ gap: 8px;
  width: 100%;
  background: transparent;
  border: none;
@@ -152,6 +190,7 @@
  border-radius: 4px;
  transition: var(--transition);
  }
+ .menu-item svg { flex-shrink: 0; }
  .menu-item:hover { background: var(--surface2); color: var(--accent); }
  .menu-item-danger { color: var(--red); }
  .menu-item-danger:hover { background: rgba(232,90,74,0.08); color: var(--red); }
@@ -904,14 +943,31 @@
  <span></span><span></span><span></span>
  </button>
  <div class="hamburger-menu" id="hamburgerMenu">
- <button class="menu-item" onclick="toggleApiPanel();closeMenu()">⚙ API Key</button>
+ <button class="menu-item" id="themeToggle" onclick="toggleTheme();closeMenu()"></button>
  <div class="menu-divider"></div>
- <button class="menu-item" onclick="openCategoriesPopover();closeMenu()">📊 BP Categories</button>
+ <button class="menu-item" onclick="toggleApiPanel();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="6.5" r="3.5"/><path d="M12 10v11"/><path d="M12 16h3"/><path d="M12 19h2"/></svg>
+ <span>API Key</span>
+ </button>
  <div class="menu-divider"></div>
- <button class="menu-item" onclick="exportCSV();closeMenu()">↓ Export CSV</button>
- <button class="menu-item" onclick="triggerImportCSV();closeMenu()">↑ Import CSV</button>
+ <button class="menu-item" onclick="openCategoriesPopover();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="14" width="4" height="7" rx="0.5"/><rect x="10" y="9" width="4" height="12" rx="0.5"/><rect x="17" y="4" width="4" height="17" rx="0.5"/></svg>
+ <span>BP Categories</span>
+ </button>
  <div class="menu-divider"></div>
- <button class="menu-item menu-item-danger" onclick="clearAllRecords();closeMenu()">🗑 Clear All Records</button>
+ <button class="menu-item" onclick="exportCSV();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17V5"/><path d="M7 10l5-5 5 5"/><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
+ <span>Export CSV</span>
+ </button>
+ <button class="menu-item" onclick="triggerImportCSV();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
+ <span>Import CSV</span>
+ </button>
+ <div class="menu-divider"></div>
+ <button class="menu-item menu-item-danger" onclick="clearAllRecords();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/><path d="M5 6l1 14a1 1 0 001 1h10a1 1 0 001-1l1-14"/></svg>
+ <span>Clear All Records</span>
+ </button>
  </div>
  <!-- BP CATEGORIES POPOVER -->
  <div class="menu-popover" id="categoriesPopover" role="dialog" aria-label="FDA BP Categories">
@@ -1100,22 +1156,16 @@ const CONFIG = {
  // Storage
  STORAGE_KEY: 'pulse_bp_data',
  API_KEY_STORAGE: 'pulse_anthropic_key',
+ THEME_STORAGE: 'pulse_theme',
  // Anthropic
  CLAUDE_MODEL: 'claude-opus-4-7',
  CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
  CLAUDE_API_VERSION: '2023-06-01',
 };
 
-// Chart series colors, mirrored from CSS :root variables so JS has one source
-// of truth and the CSS controls the actual hex. Read once on load.
-const COLORS = (() => {
- const root = getComputedStyle(document.documentElement);
- return {
- systolic: root.getPropertyValue('--c-systolic').trim() || '#e8624a',
- diastolic: root.getPropertyValue('--c-diastolic').trim() || '#6ab8d4',
- bpm: root.getPropertyValue('--c-bpm').trim() || '#5db87a',
- };
-})();
+// Chart series colors are read from CSS variables inside renderChart() at render
+// time — see getChartColors() in the CHART section. This lets theme toggles flow
+// through to the chart without any cache to invalidate.
 
 // ─── DATA STORE ───────────────────────────────────────────────────────────────
 const STORAGE_KEY = CONFIG.STORAGE_KEY;
@@ -1382,7 +1432,7 @@ function updateApiKeyBtn() {
  // Header button replaced by hamburger menu; this is now a no-op kept for compatibility
  const btn = document.getElementById('apiKeyBtn');
  if (!btn) return;
- btn.textContent = getApiKey() ? '✓ API Key' : '⚙ API Key';
+ btn.textContent = getApiKey() ? '✓ API Key' : 'API Key';
  btn.style.color = getApiKey() ? 'var(--green)' : '';
  btn.style.borderColor = getApiKey() ? 'var(--green)' : '';
 }
@@ -1637,11 +1687,11 @@ setTimeout(updateApiKeyBtn, 100);
 async function handleFiles(files) {
  const apiKey = getApiKey();
  if (!apiKey) {
- toast('Please add your Anthropic API key first — tap ⚙ API Key in the header.', 'warning');
+ toast('Please add your Anthropic API key first — open the menu, then API Key.', 'warning');
  return;
  }
  if (!apiKey.startsWith('sk-ant-')) {
- toast('API key doesn\'t look right — it should start with sk-ant-. Check your key in ⚙ API Key.', 'warning');
+ toast('API key doesn\'t look right — it should start with sk-ant-. Check your key under menu → API Key.', 'warning');
  return;
  }
  if (window.location.protocol === 'file:') {
@@ -2179,13 +2229,14 @@ function saveRecord({ sys, dia, bpm, device, dt, notes }) {
 
 // ─── CLEAR ALL DATA ───────────────────────────────────────────────────────────
 // Hamburger-menu testing utility: wipes the records array; leaves everything else
-// (API key, OCR queue, sort state) alone. Standard confirm dialog gates the action.
+// (API key, theme preference, OCR queue, sort state) alone. Standard confirm
+// dialog gates the action.
 async function clearAllRecords() {
  const count = records.length;
  if (count === 0) { toast('No records to clear.', 'info'); return; }
  const ok = await showConfirm({
  title: 'Clear all records?',
- message: 'This will permanently delete all ' + count + ' measurement' + (count === 1 ? '' : 's') + '. Your API key will be kept.',
+ message: 'This will permanently delete all ' + count + ' measurement' + (count === 1 ? '' : 's') + '. Your API key and theme preference will be kept.',
  confirmLabel: 'Delete All',
  });
  if (!ok) return;
@@ -2194,6 +2245,42 @@ async function clearAllRecords() {
  updateDeviceOptions();
  renderData();
  toast('All records cleared.', 'success');
+}
+
+// ─── THEME ────────────────────────────────────────────────────────────────────
+// Default dark; light theme uses a warm cream palette (see :root[data-theme="light"]
+// in CSS). The inline boot script in <head> applies the saved theme before first
+// paint so there's no flash. Chart series colors are read from CSS vars inside
+// renderChart at render time — toggling theme just needs a renderData() to redraw
+// the chart with the correct palette.
+function loadTheme() {
+ return localStorage.getItem(CONFIG.THEME_STORAGE) || 'dark';
+}
+
+function applyTheme(theme) {
+ if (theme === 'light') document.documentElement.setAttribute('data-theme', 'light');
+ else document.documentElement.removeAttribute('data-theme');
+ localStorage.setItem(CONFIG.THEME_STORAGE, theme);
+ renderThemeToggle();
+}
+
+function toggleTheme() {
+ const next = loadTheme() === 'dark' ? 'light' : 'dark';
+ applyTheme(next);
+ if (records.length > 0) renderData();
+}
+
+// Sun is shown when current theme is DARK (icon hints at destination — tap → light).
+// Moon is shown when current theme is LIGHT (tap → dark). Both line-art to match
+// the rest of the new icon set.
+const _sunSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M4.93 19.07l1.41-1.41"/><path d="M17.66 6.34l1.41-1.41"/></svg>';
+const _moonSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>';
+
+function renderThemeToggle() {
+ const btn = document.getElementById('themeToggle');
+ if (!btn) return;
+ const isLight = loadTheme() === 'light';
+ btn.innerHTML = (isLight ? _moonSvg : _sunSvg) + '<span>' + (isLight ? 'Dark theme' : 'Light theme') + '</span>';
 }
 
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
@@ -2364,13 +2451,34 @@ function showNotePopup(event, recordId) {
 }
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
-// Static chart config — only the {data, pointBackgroundColor} fields are
-// computed per render. Lifting these out keeps renderChart compact.
-const CHART_DATASET_DEFAULTS = {
+// Reads the current theme's CSS color variables. Called inside renderChart so
+// theme toggles produce a correctly-colored redraw without any cache to manage.
+function getChartColors() {
+ const root = getComputedStyle(document.documentElement);
+ const v = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
+ return {
+ systolic: v('--c-systolic', '#e8624a'),
+ diastolic: v('--c-diastolic', '#6ab8d4'),
+ bpm: v('--c-bpm', '#5db87a'),
+ systolicFill: v('--c-systolic-fill', 'rgba(232,98,74,0.12)'),
+ diastolicFill: v('--c-diastolic-fill', 'rgba(106,184,212,0.07)'),
+ tickColor: v('--text3', '#605a54'),
+ gridX: v('--chart-grid-x', 'rgba(255,255,255,0.04)'),
+ gridY: v('--chart-grid-y', 'rgba(255,255,255,0.06)'),
+ };
+}
+
+function renderChart(series) {
+ if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+ const canvas = document.getElementById('bpChart');
+ if (!canvas || series.length === 0) return;
+
+ const C = getChartColors();
+ const datasetDefaults = {
  systolic: {
  label: 'Systolic',
- borderColor: COLORS.systolic,
- backgroundColor: 'rgba(232,98,74,0.12)',
+ borderColor: C.systolic,
+ backgroundColor: C.systolicFill,
  pointRadius: 5,
  pointHoverRadius: 8,
  tension: 0.35,
@@ -2380,9 +2488,9 @@ const CHART_DATASET_DEFAULTS = {
  },
  diastolic: {
  label: 'Diastolic',
- borderColor: COLORS.diastolic,
- backgroundColor: 'rgba(106,184,212,0.07)',
- pointBackgroundColor: COLORS.diastolic,
+ borderColor: C.diastolic,
+ backgroundColor: C.diastolicFill,
+ pointBackgroundColor: C.diastolic,
  pointRadius: 4,
  pointHoverRadius: 7,
  tension: 0.35,
@@ -2390,9 +2498,9 @@ const CHART_DATASET_DEFAULTS = {
  },
  bpm: {
  label: 'BPM',
- borderColor: COLORS.bpm,
+ borderColor: C.bpm,
  backgroundColor: 'transparent',
- pointBackgroundColor: COLORS.bpm,
+ pointBackgroundColor: C.bpm,
  pointRadius: 3,
  pointHoverRadius: 6,
  tension: 0.35,
@@ -2400,17 +2508,11 @@ const CHART_DATASET_DEFAULTS = {
  borderCapStyle: 'round',
  spanGaps: true,
  },
-};
-
-const CHART_SCALES = {
- x: { ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } },
- y: { ticks: { color: '#605a54', font: { family: 'DM Mono', size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' }, min: 40 },
-};
-
-function renderChart(series) {
- if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
- const canvas = document.getElementById('bpChart');
- if (!canvas || series.length === 0) return;
+ };
+ const scales = {
+ x: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: C.gridX } },
+ y: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 } }, grid: { color: C.gridY }, min: 40 },
+ };
 
  // Sort newest-first (most recent → least recent, left → right). The line still
  // connects in time order; only the axis direction is flipped.
@@ -2440,12 +2542,12 @@ function renderChart(series) {
  });
 
  const datasets = [
- { ...CHART_DATASET_DEFAULTS.systolic,
+ { ...datasetDefaults.systolic,
  data: points.map(r => r.sys),
  pointBackgroundColor: points.map(r => bpCategory(r.sys, r.dia).color) },
- { ...CHART_DATASET_DEFAULTS.diastolic,
+ { ...datasetDefaults.diastolic,
  data: points.map(r => r.dia) },
- { ...CHART_DATASET_DEFAULTS.bpm,
+ { ...datasetDefaults.bpm,
  data: points.map(r => r.bpm || null) },
  ];
 
@@ -2457,7 +2559,7 @@ function renderChart(series) {
  animation: false,
  interaction: { mode: 'index', intersect: false },
  plugins: { legend: { display: false }, tooltip: { enabled: false } },
- scales: CHART_SCALES,
+ scales,
  onClick(evt) {
  // intersect:true → only register clicks that land ON a dot. Misses
  // bubble to the document, where the managed dismiss-handler closes
@@ -2803,6 +2905,7 @@ function parseCSVLine(line) {
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
+applyTheme(loadTheme());
 setEntryAccordion();
 updateDeviceOptions();
 renderData();
