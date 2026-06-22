@@ -1,5 +1,4 @@
-
-<!-- Pulse v6.58 — 2026-06-20 | Two UX changes. (1) Sticky y-axis: the chart container was restructured into a flex .chart-section that holds a fixed 38px-wide .chart-yaxis-fixed div outside the horizontal scroll area, plus the existing scrolling .chart-wrap. Chart.js's own y-axis labels (and the axis line) are now hidden — scales.y.ticks.display: false and border.display: false — but grid lines are preserved. After each renderChart() call, the code reads chartInstance.scales.y and renders HTML labels in the fixed area at the correct pixel positions via getPixelForValue(), so the y-axis values stay visible at all times while the chart scrolls horizontally. (2) Date format normalization to MM-DD-YY: chart x-axis labels go from "June 5, '26" to "06-05-26"; table Date & Time column goes from "05/06/26 10:45 PM" to "05-06-26 10:45 PM" (time portion unchanged). Tooltip date format ("Jun 18, 26") is unchanged per scope. -->
+<!-- Pulse v6.59 — 2026-06-20 | Two y-axis polish items. (1) Removed the explicit background: var(--bg) from .chart-yaxis-fixed so it inherits the same effective backdrop as the chart x-axis area (both are now siblings under the same parent chain with no intervening background — guaranteed match across light/dark themes). (2) Each y-tick label now has a small horizontal line attached via ::after, sized to the chart's --chart-grid-y color. The y-tick is right-anchored to the y-axis-fixed's right edge (which sits flush against the chart canvas left edge), so the small HTML line visually continues into the canvas grid lines — extending each horizontal grid line all the way to the right edge of its y-axis label as requested. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -703,18 +702,26 @@
  height: 200px;
  position: relative;
  flex-shrink: 0;
- background: var(--bg);
  }
  .chart-yaxis-fixed .y-tick {
  position: absolute;
- right: 6px;
+ right: 0;
+ top: 0;
+ transform: translateY(-50%);
+ display: flex;
+ align-items: center;
  font-family: 'DM Mono', monospace;
  font-size: 10px;
  color: var(--text3);
- transform: translateY(-50%);
  line-height: 1;
- text-align: right;
  white-space: nowrap;
+ }
+ .chart-yaxis-fixed .y-tick::after {
+ content: '';
+ display: block;
+ width: 5px;
+ height: 1px;
+ background: var(--chart-grid-y);
  }
  .chart-wrap {
  flex: 1;
