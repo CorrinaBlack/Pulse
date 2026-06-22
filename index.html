@@ -1,4 +1,4 @@
-<!-- Pulse v6.65 — 2026-06-20 | Two y-axis spacing tweaks. (1) .chart-wrap margin-left adjusted from -5px to -10px — slightly more leftward pull, closing the gap a bit further. (2) Added 5px right padding to the y-axis labels by changing .chart-yaxis-fixed .y-tick from right: 0 to right: 5px — so the numbers sit 5px in from the right edge of the y-axis-fixed area, giving breathing room between the labels and the chart content. -->
+<!-- Pulse v6.66 — 2026-06-20 | Multi-select redesign: dropped the checkbox column in favor of tap-to-select row interaction. New flow: tap any row to toggle its selection (row gets the warm tint, chart redraws on just selected rows); tap again to deselect. Shift-click on another row selects the contiguous range from the last-tapped row in the currently-visible sort order, ADDING the range to the existing selection (existing items stay). Plain tap also serves as the shift-click anchor reset. Works identically on iPad (single tap) and Mac (single click); shift-click is a desktop power-user shortcut layered on top. Cursor changes to pointer on row hover (desktop affordance). The selection bar is now always visible: when empty it shows a muted hint ("Tap any row to filter the chart · Shift-click for a range") so the feature is discoverable on first use; when 1+ are selected it shows the warm tint with count + Clear Selections button. Action buttons (edit / delete / notes ☰) call event.stopPropagation() so clicking them doesn't toggle row selection. Mobile-hide media query shifted back to nth-child(7) since the column count is back to 8. New state: lastSelectedId (shift-click anchor, cleared on deletion or clearSelections) and currentSortedRecords (snapshot of post-sort visible order, used by range select). -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -887,39 +887,27 @@
  }
  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
  .data-table td.mono { font-family: 'DM Mono', monospace; }
- .data-table .cell-select {
- width: 36px;
- padding-left: 12px;
- padding-right: 4px;
- }
- .data-table th.col-select {
- width: 36px;
- padding-left: 12px;
- padding-right: 4px;
- }
- .row-checkbox {
- width: 14px;
- height: 14px;
- cursor: pointer;
- accent-color: var(--accent);
- margin: 0;
- vertical-align: middle;
- }
+ .data-table tbody tr { cursor: pointer; }
  .data-table tr.row-selected td { background: rgba(232,98,74,0.06); }
  .selection-bar {
  display: flex;
  align-items: center;
  justify-content: space-between;
- background: rgba(232,98,74,0.08);
+ background: transparent;
  border: 1px solid var(--border);
  border-radius: var(--radius-sm);
  padding: 8px 14px;
  margin-bottom: 12px;
  font-family: 'DM Mono', monospace;
  font-size: 12px;
+ color: var(--text3);
+ }
+ .selection-bar.has-selection {
+ background: rgba(232,98,74,0.08);
  color: var(--text2);
  }
  .selection-bar .sel-count strong { color: var(--accent); font-weight: 700; margin-right: 4px; }
+ .selection-bar .sel-hint { flex: 1; }
  .btn-clear-selections {
  background: transparent;
  border: 1px solid var(--border);
@@ -1063,7 +1051,7 @@
  .stats-row { grid-template-columns: 1fr 1fr; }
  .edit-grid { grid-template-columns: 1fr 1fr; }
  .cat-grid { grid-template-columns: 1fr 1fr; }
- .data-table th:nth-child(8), .data-table td:nth-child(8) { display: none; }
+ .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
  }
 </style>
 </head>
@@ -1420,12 +1408,22 @@ let currentSort = { column: 'date', direction: 'desc' };
 // at the left, 'asc' = oldest at the left.
 let chartTimeDirection = 'desc';
 
-// Holds record IDs the user has checkbox-selected in the table. When the set
-// is non-empty, the chart redraws on just those records (intersected with the
+// Holds record IDs the user has tap-selected in the table. When the set is
+// non-empty, the chart redraws on just those records (intersected with the
 // currently-visible filter set). The set persists across re-sorts since it's
 // keyed by record ID, not row position. Cleared by the "Clear Selections"
-// button that appears above the table when 1+ are selected.
+// button in the selection bar.
 let selectedRecordIds = new Set();
+
+// Anchor for shift-click range selection — the id of the row whose tap last
+// established the selection origin. Cleared when selections are cleared, or
+// when the anchor record is deleted.
+let lastSelectedId = null;
+
+// Snapshot of the records in their currently-displayed sort order. Updated
+// by renderTable on every render. Used by shift-click range selection to
+// determine "between" relative to what the user is actually seeing.
+let currentSortedRecords = [];
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -2434,6 +2432,7 @@ async function clearAllRecords() {
  if (!ok) return;
  records = [];
  selectedRecordIds.clear();
+ lastSelectedId = null;
  saveData(records);
  updateDeviceOptions();
  renderData();
@@ -2603,17 +2602,17 @@ function renderData() {
 
  <div style="height:24px"></div>
 
- ${selectedRecordIds.size > 0 ? `
- <div class="selection-bar">
- <span class="sel-count"><strong>${selectedRecordIds.size}</strong>selected — chart shows only these</span>
- <button class="btn-clear-selections" onclick="clearSelections()">Clear Selections</button>
- </div>` : ''}
+ <div class="selection-bar ${selectedRecordIds.size > 0 ? 'has-selection' : ''}">
+ ${selectedRecordIds.size > 0
+ ? `<span class="sel-count"><strong>${selectedRecordIds.size}</strong>selected — chart shows only these</span>
+ <button class="btn-clear-selections" onclick="clearSelections()">Clear Selections</button>`
+ : `<span class="sel-hint">Tap any row to filter the chart · Shift-click for a range</span>`}
+ </div>
 
  <div class="data-table-wrap">
  <table class="data-table">
  <thead>
  <tr>
- <th class="col-select"></th>
  <th class="sortable" onclick="setSort('date')">Date &amp; Time ${sortArrow('date')}</th>
  <th class="sortable" onclick="setSort('sys')">Systolic ${sortArrow('sys')}</th>
  <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
@@ -2660,17 +2659,40 @@ function sortArrow(column) {
  : '<span class="sort-arrow">↓</span>';
 }
 
-// Row-selection helpers — toggle uses renderDataPreserveScroll so checking a
+// Row-selection helpers — toggle uses renderDataPreserveScroll so tapping a
 // row deep in a long list doesn't snap the user back to the top. Clearing
-// removes the selection bar, so a normal renderData is fine.
-function toggleRowSelection(id, checked) {
- if (checked) selectedRecordIds.add(id);
- else selectedRecordIds.delete(id);
+// removes the selection bar's warm tint, so a normal renderData is fine.
+//
+// Plain tap (no modifier): toggles the row's selection and resets the
+// shift-click anchor to this row.
+// Shift-click (desktop): selects the range from the anchor to this row in
+// the currently-visible sort order, ADDING the range to the existing
+// selection (existing items stay selected). Falls through to plain-toggle
+// if there's no anchor yet, or if the anchor row is no longer visible.
+function toggleRowSelection(id, event) {
+ if (event && event.shiftKey && lastSelectedId && lastSelectedId !== id) {
+ const ids = currentSortedRecords.map(r => r.id);
+ const fromIdx = ids.indexOf(lastSelectedId);
+ const toIdx = ids.indexOf(id);
+ if (fromIdx !== -1 && toIdx !== -1) {
+ const start = Math.min(fromIdx, toIdx);
+ const end = Math.max(fromIdx, toIdx);
+ for (let i = start; i <= end; i++) selectedRecordIds.add(ids[i]);
+ lastSelectedId = id;
+ renderDataPreserveScroll();
+ return;
+ }
+ }
+ // Plain toggle
+ if (selectedRecordIds.has(id)) selectedRecordIds.delete(id);
+ else selectedRecordIds.add(id);
+ lastSelectedId = id;
  renderDataPreserveScroll();
 }
 
 function clearSelections() {
  selectedRecordIds.clear();
+ lastSelectedId = null;
  renderData();
 }
 
@@ -2707,6 +2729,10 @@ function renderTable(filtered) {
  return 0;
  });
 
+ // Capture the post-sort order so shift-click range selection can compute
+ // "between" relative to what the user is actually seeing.
+ currentSortedRecords = sorted;
+
  const body = document.getElementById('tableBody');
  body.innerHTML = sorted.map(r => {
  const dt = new Date(r.dt);
@@ -2717,11 +2743,10 @@ function renderTable(filtered) {
  const dtStr = month2 + '-' + day2 + '-' + year2 +
  ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
  const notesCell = r.notes
- ? `<button class="act-btn act-notes" onclick="showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
+ ? `<button class="act-btn act-notes" onclick="event.stopPropagation(); showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
  : '';
  const isSelected = selectedRecordIds.has(r.id);
- return `<tr class="${isSelected ? 'row-selected' : ''}">
- <td class="cell-select"><input type="checkbox" class="row-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleRowSelection('${r.id}', this.checked)" aria-label="Select reading" /></td>
+ return `<tr class="${isSelected ? 'row-selected' : ''}" onclick="toggleRowSelection('${r.id}', event)">
  <td class="mono">${dtStr}</td>
  <td class="mono">${r.sys}</td>
  <td class="mono">${r.dia}</td>
@@ -2730,8 +2755,8 @@ function renderTable(filtered) {
  <td class="cell-notes">${notesCell}</td>
  <td><span class="bp-badge" style="background:${cat.color}22;color:${cat.color}">${cat.label}</span></td>
  <td><div class="td-actions">
- <button class="act-btn act-edit" onclick="openEdit('${r.id}')" title="Edit" aria-label="Edit">✎</button>
- <button class="act-btn act-delete" onclick="deleteRecord('${r.id}')" title="Delete" aria-label="Delete">✕</button>
+ <button class="act-btn act-edit" onclick="event.stopPropagation(); openEdit('${r.id}')" title="Edit" aria-label="Edit">✎</button>
+ <button class="act-btn act-delete" onclick="event.stopPropagation(); deleteRecord('${r.id}')" title="Delete" aria-label="Delete">✕</button>
  </div></td>
  </tr>`;
  }).join('');
@@ -3022,6 +3047,7 @@ async function deleteRecord(id) {
  if (!ok) return;
  records = records.filter(r => r.id !== id);
  selectedRecordIds.delete(id);
+ if (lastSelectedId === id) lastSelectedId = null;
  saveData(records);
  renderDataPreserveScroll();
 }
