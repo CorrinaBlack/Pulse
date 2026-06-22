@@ -1,3 +1,4 @@
+
 <!-- Pulse v6.58 — 2026-06-20 | Two UX changes. (1) Sticky y-axis: the chart container was restructured into a flex .chart-section that holds a fixed 38px-wide .chart-yaxis-fixed div outside the horizontal scroll area, plus the existing scrolling .chart-wrap. Chart.js's own y-axis labels (and the axis line) are now hidden — scales.y.ticks.display: false and border.display: false — but grid lines are preserved. After each renderChart() call, the code reads chartInstance.scales.y and renders HTML labels in the fixed area at the correct pixel positions via getPixelForValue(), so the y-axis values stay visible at all times while the chart scrolls horizontally. (2) Date format normalization to MM-DD-YY: chart x-axis labels go from "June 5, '26" to "06-05-26"; table Date & Time column goes from "05/06/26 10:45 PM" to "05-06-26 10:45 PM" (time portion unchanged). Tooltip date format ("Jun 18, 26") is unchanged per scope. -->
 <!DOCTYPE html>
 <html lang="en">
