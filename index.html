@@ -1,4 +1,4 @@
-<!-- Pulse v6.61 — 2026-06-20 | Closed most of the residual gap between the y-axis labels and the chart content. Even with the v6.60 afterFit hack setting scale.width = 0, Chart.js was still reserving roughly 25-30px of internal padding on the left for the (hidden) y-axis area, leaving a visible gap before grid lines / translucent fill / first data point. Fix: give .chart-yaxis-fixed an opaque background (var(--bg) — same effective color as the chart area's parent, so the previously-requested "match the bg behind the x-axis labels" still holds) and a z-index: 2 stacking context; then pull .chart-wrap leftward via margin-left: -20px so Chart.js's residual reserved area tucks behind the y-axis-fixed div. Net result: the chart content visually starts roughly where the desired-state screenshot shows it, with only a small breathing margin between the y-axis labels and the leftmost data point. -->
+<!-- Pulse v6.62 — 2026-06-20 | Two y-axis area fixes. (1) Background: the .accordion-body that hosts the chart has background: var(--surface) (white in light theme), not var(--bg). The y-axis-fixed was previously using var(--bg) which produced a visible vertical strip in a different shade. Switched to var(--surface) so it matches the actual chart backdrop in both themes. (2) Height: the y-axis-fixed was hardcoded to 200px (matching the canvas height attribute), but Chart.js's chart area ends roughly 25-30px above that to make room for the x-axis labels. So the y-axis-fixed visibly extended below the "40" tick into the x-axis label zone. Now setting its height dynamically in renderChart to (yScale.bottom + 8) — the +8 leaves room for the bottom half of the lowest label transform: translateY(-50%) without clipping. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -699,11 +699,10 @@
  }
  .chart-yaxis-fixed {
  width: 38px;
- height: 200px;
  position: relative;
  z-index: 2;
  flex-shrink: 0;
- background: var(--bg);
+ background: var(--surface);
  }
  .chart-yaxis-fixed .y-tick {
  position: absolute;
@@ -2947,6 +2946,11 @@ function renderChart(series) {
  const yPx = yScale.getPixelForValue(t.value);
  return `<div class="y-tick" style="top:${yPx}px">${t.value}</div>`;
  }).join('');
+ // Trim the y-axis-fixed height to the chart-area bottom (with a small
+ // buffer so the bottom half of the lowest label doesn't clip). Without
+ // this it would run the full 200px canvas height and visibly extend
+ // below the chart's "40" tick into the x-axis label zone.
+ yAxisHost.style.height = (yScale.bottom + 8) + 'px';
  }
 }
 
