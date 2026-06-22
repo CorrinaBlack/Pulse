@@ -1,4 +1,4 @@
-<!-- Pulse v6.60 — 2026-06-20 | Eliminated the gap between the y-axis labels and the chart's grid lines / translucent fill area. Even with the y-axis ticks and border hidden, Chart.js was still reserving ~30px on the left for the (invisible) axis. Added afterFit(scale) { scale.width = 0; } to the y-axis scale config so it allocates zero horizontal layout space — the chart area now starts at canvas-x=0, which sits flush against the .chart-yaxis-fixed div on its left. Horizontal grid lines and the translucent systolic fill now visually meet the right edge of the y-axis labels with no intervening gap. -->
+<!-- Pulse v6.61 — 2026-06-20 | Closed most of the residual gap between the y-axis labels and the chart content. Even with the v6.60 afterFit hack setting scale.width = 0, Chart.js was still reserving roughly 25-30px of internal padding on the left for the (hidden) y-axis area, leaving a visible gap before grid lines / translucent fill / first data point. Fix: give .chart-yaxis-fixed an opaque background (var(--bg) — same effective color as the chart area's parent, so the previously-requested "match the bg behind the x-axis labels" still holds) and a z-index: 2 stacking context; then pull .chart-wrap leftward via margin-left: -20px so Chart.js's residual reserved area tucks behind the y-axis-fixed div. Net result: the chart content visually starts roughly where the desired-state screenshot shows it, with only a small breathing margin between the y-axis labels and the leftmost data point. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -701,7 +701,9 @@
  width: 38px;
  height: 200px;
  position: relative;
+ z-index: 2;
  flex-shrink: 0;
+ background: var(--bg);
  }
  .chart-yaxis-fixed .y-tick {
  position: absolute;
@@ -726,6 +728,7 @@
  .chart-wrap {
  flex: 1;
  min-width: 0;
+ margin-left: -20px;
  overflow-x: auto;
  overflow-y: visible;
  -webkit-overflow-scrolling: touch;
