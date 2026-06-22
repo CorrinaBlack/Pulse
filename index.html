@@ -1,4 +1,4 @@
-<!-- Pulse v6.59 — 2026-06-20 | Two y-axis polish items. (1) Removed the explicit background: var(--bg) from .chart-yaxis-fixed so it inherits the same effective backdrop as the chart x-axis area (both are now siblings under the same parent chain with no intervening background — guaranteed match across light/dark themes). (2) Each y-tick label now has a small horizontal line attached via ::after, sized to the chart's --chart-grid-y color. The y-tick is right-anchored to the y-axis-fixed's right edge (which sits flush against the chart canvas left edge), so the small HTML line visually continues into the canvas grid lines — extending each horizontal grid line all the way to the right edge of its y-axis label as requested. -->
+<!-- Pulse v6.60 — 2026-06-20 | Eliminated the gap between the y-axis labels and the chart's grid lines / translucent fill area. Even with the y-axis ticks and border hidden, Chart.js was still reserving ~30px on the left for the (invisible) axis. Added afterFit(scale) { scale.width = 0; } to the y-axis scale config so it allocates zero horizontal layout space — the chart area now starts at canvas-x=0, which sits flush against the .chart-yaxis-fixed div on its left. Horizontal grid lines and the translucent systolic fill now visually meet the right edge of the y-axis labels with no intervening gap. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2832,7 +2832,18 @@ function renderChart(series) {
  };
  const scales = {
  x: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: C.gridX } },
- y: { ticks: { display: false }, border: { display: false }, grid: { color: C.gridY }, min: 40 },
+ // Hide y-axis labels and force its allocated layout width to 0 so the chart
+ // area extends to the canvas left edge — which sits flush against the
+ // .chart-yaxis-fixed div (where the HTML labels live). Without afterFit,
+ // Chart.js still reserves ~30px on the left even with ticks/border hidden,
+ // creating a visible gap between the y-axis labels and the grid lines.
+ y: {
+ ticks: { display: false },
+ border: { display: false },
+ grid: { color: C.gridY },
+ min: 40,
+ afterFit(scale) { scale.width = 0; },
+ },
  };
 
  // Sort by chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
