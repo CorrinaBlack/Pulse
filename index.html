@@ -1,4 +1,4 @@
-<!-- Pulse v6.62 — 2026-06-20 | Two y-axis area fixes. (1) Background: the .accordion-body that hosts the chart has background: var(--surface) (white in light theme), not var(--bg). The y-axis-fixed was previously using var(--bg) which produced a visible vertical strip in a different shade. Switched to var(--surface) so it matches the actual chart backdrop in both themes. (2) Height: the y-axis-fixed was hardcoded to 200px (matching the canvas height attribute), but Chart.js's chart area ends roughly 25-30px above that to make room for the x-axis labels. So the y-axis-fixed visibly extended below the "40" tick into the x-axis label zone. Now setting its height dynamically in renderChart to (yScale.bottom + 8) — the +8 leaves room for the bottom half of the lowest label transform: translateY(-50%) without clipping. -->
+<!-- Pulse v6.63 — 2026-06-20 | Two y-axis tweaks tuned in by the user. (1) The small ::after tick-mark line on each y-axis label (added in v6.59 to extend horizontal grid lines into the label area) has been removed entirely — the user dialed it down to width: 0 visually, and since the pseudo-element wasn't referenced anywhere else, the cleaner fix is to drop the whole block. (2) .chart-wrap margin-left adjusted from -20px to -9px — less aggressive leftward pull, restoring more breathing room between the y-axis labels and the chart content (closer to the natural Chart.js spacing the user preferred). -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -716,13 +716,6 @@
  color: var(--text3);
  line-height: 1;
  white-space: nowrap;
- }
- .chart-yaxis-fixed .y-tick::after {
- content: '';
- display: block;
- width: 0px;
- height: 1px;
- background: var(--chart-grid-y);
  }
  .chart-wrap {
  flex: 1;
