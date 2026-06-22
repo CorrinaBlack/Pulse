@@ -1,4 +1,4 @@
-<!-- Pulse v6.64 — 2026-06-20 | .chart-wrap margin-left tuned from -9px to -5px — even less leftward pull, giving slightly more breathing room between the y-axis labels and the chart content. User-tuned value. -->
+<!-- Pulse v6.65 — 2026-06-20 | Two y-axis spacing tweaks. (1) .chart-wrap margin-left adjusted from -5px to -10px — slightly more leftward pull, closing the gap a bit further. (2) Added 5px right padding to the y-axis labels by changing .chart-yaxis-fixed .y-tick from right: 0 to right: 5px — so the numbers sit 5px in from the right edge of the y-axis-fixed area, giving breathing room between the labels and the chart content. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -706,7 +706,7 @@
  }
  .chart-yaxis-fixed .y-tick {
  position: absolute;
- right: 0;
+ right: 5px;
  top: 0;
  transform: translateY(-50%);
  display: flex;
@@ -720,7 +720,7 @@
  .chart-wrap {
  flex: 1;
  min-width: 0;
- margin-left: -5px;
+ margin-left: -10px;
  overflow-x: auto;
  overflow-y: visible;
  -webkit-overflow-scrolling: touch;
