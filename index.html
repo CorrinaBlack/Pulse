@@ -1,4 +1,4 @@
-<!-- Pulse v6.67 — 2026-06-20 | @-tag system in Notes (roadmap #5). Tags live INLINE in the notes string (no separate array on each record) — e.g., "Felt great today @GoodSleep @Ran3mi". Parsed via /@[A-Za-z0-9+]+/g. (1) Seed list of 26 tags (@4ShotsCoffee, @PostCoffee, @PreCoffee, @NoCoffee, @IrregularHeartBeats, @Whey, @Collagen, @Supplements, @Glycine+NAC, @GoodSleep, @PoorSleep, @Unwell, @Nausea, @Headache, @Migraine, @Weights, @Walked5mi, @Walked4mi, @Walked3mi, @Ran1mi-@Ran6mi, @LazyDay). Custom tags via @-typing get picked up automatically once they're in any record. (2) Autocomplete popup attached via event delegation on class="notes-input" — covers the manual entry input, edit modal textarea, and all OCR queue items. Arrow keys navigate, Enter/Tab inserts, Escape or space dismisses. Click-outside also dismisses. (3) Tag styling: a chip-style span (.tag-chip) wraps each @-tag in the notes column popup AND in the chart tooltip's notes line. (4) Filter dropdown: small funnel icon in the Notes column header (stopPropagation prevents triggering the sort onclick). Opens a dropdown listing all tags currently in use across records with their record counts. Clicking a tag narrows the table AND the chart to records containing that tag. A filter-active bar appears above the selection bar with a "Clear filter" button. Filter is independent of selection — selection still works on top of the filtered set. (5) Internal: extractTags(), renderNotesHtml(), getAvailableTagsWithCounts(), autocompleteState singleton, openTagFilter / setTagFilter / clearTagFilter / closeTagFilter. Editable seed list deferred to a follow-up per user. -->
+<!-- Pulse v6.68 — 2026-06-20 | Three follow-ups to the v6.67 @-tag system. (1) Stat cards now reflect the chart's actual data: renderData computes chartData (tag filter narrowed by selectedRecordIds) BEFORE the avg/sys/dia/bpm reductions and uses it for those stats. So a tag filter or row selection now updates the AVG SYSTOLIC / DIASTOLIC / HEART RATE numbers in sync with what's plotted. (2) Autocomplete max-height tightened from 200px to 170px (≈5 items visible, scrollbar reveals the rest) so the popup no longer dominates the screen. (3) Two autocomplete viewport fixes: (a) if the popup would extend past the viewport bottom (common when the edit modal's notes textarea sits near the bottom), it now flips and renders ABOVE the input; (b) mousedown inside the popup but not on a .ta-item (the scrollbar case) no longer collapses the popup, so the user can actually grab the scrollbar to scroll through the full tag list. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1075,7 +1075,7 @@
  border-radius: var(--radius-sm);
  box-shadow: 0 6px 20px rgba(0,0,0,0.2);
  z-index: 10001;
- max-height: 200px;
+ max-height: 170px;
  overflow-y: auto;
  min-width: 200px;
  padding: 4px;
@@ -2715,9 +2715,17 @@ function renderData() {
  filtered = filtered.filter(r => extractTags(r.notes).some(t => t.toLowerCase() === filterLower));
  }
 
- const avgSys = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.sys, 0) / filtered.length) : '--';
- const avgDia = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.dia, 0) / filtered.length) : '--';
- const bpmR = filtered.filter(r => r.bpm);
+ // chartData = what the chart actually plots. Stats below are computed
+ // from the same set so they always reflect what the user is seeing.
+ // Tag filter narrows `filtered`; row selection further narrows that into
+ // `chartData`. When nothing is selected, chartData === filtered.
+ const chartData = selectedRecordIds.size > 0
+ ? filtered.filter(r => selectedRecordIds.has(r.id))
+ : filtered;
+
+ const avgSys = chartData.length ? Math.round(chartData.reduce((s,r) => s+r.sys, 0) / chartData.length) : '--';
+ const avgDia = chartData.length ? Math.round(chartData.reduce((s,r) => s+r.dia, 0) / chartData.length) : '--';
+ const bpmR = chartData.filter(r => r.bpm);
  const avgBpm = bpmR.length ? Math.round(bpmR.reduce((s,r) => s+r.bpm, 0) / bpmR.length) : '--';
  const cat = (typeof avgSys === 'number') ? bpCategory(avgSys, avgDia) : null;
 
@@ -2784,11 +2792,8 @@ function renderData() {
  </div>
  `;
 
- // Chart shows the intersection of selected and currently-visible. When
- // nothing is selected, chart shows everything visible (current behavior).
- const chartData = selectedRecordIds.size > 0
- ? filtered.filter(r => selectedRecordIds.has(r.id))
- : filtered;
+ // chartData was computed above (alongside the stats) so the stat cards
+ // and the chart both stay in lockstep with the same data set.
  renderChart(chartData);
  renderTable(filtered);
 }
@@ -2950,11 +2955,6 @@ function showTagAutocomplete(input) {
  : candidates.filter(t => t.toLowerCase().startsWith('@' + prefixLower));
  autocompleteState.matches = matches;
  if (autocompleteState.selectedIdx >= matches.length) autocompleteState.selectedIdx = 0;
- // Position below the input
- const rect = input.getBoundingClientRect();
- ac.style.left = Math.max(8, rect.left) + 'px';
- ac.style.top = (rect.bottom + 4) + 'px';
- ac.style.minWidth = Math.max(200, rect.width) + 'px';
  if (matches.length === 0) {
  ac.innerHTML = '<div class="ta-empty">No matching tags — keep typing to use a custom tag</div>';
  } else {
@@ -2962,7 +2962,22 @@ function showTagAutocomplete(input) {
  `<div class="ta-item${idx === autocompleteState.selectedIdx ? ' selected' : ''}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</div>`
  ).join('');
  }
+ // Position: prefer below the input; flip above if it would extend past the
+ // viewport bottom. Width matches the input but with a sensible minimum.
+ const rect = input.getBoundingClientRect();
+ ac.style.left = Math.max(8, rect.left) + 'px';
+ ac.style.minWidth = Math.max(200, rect.width) + 'px';
+ ac.style.top = (rect.bottom + 4) + 'px';
  ac.style.display = 'block';
+ // Measure after display so max-height is applied
+ const acRect = ac.getBoundingClientRect();
+ if (acRect.bottom > window.innerHeight - 8) {
+ const aboveTop = rect.top - acRect.height - 4;
+ ac.style.top = (aboveTop >= 8 ? aboveTop : 8) + 'px';
+ }
+ // Keep the highlighted item visible if the user is navigating with arrows
+ const selectedEl = ac.querySelector('.ta-item.selected');
+ if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest' });
 }
 
 function handleTagInput(e) {
@@ -3048,6 +3063,10 @@ document.addEventListener('mousedown', e => {
  }
  return;
  }
+ // If the mousedown landed inside the dropdown but NOT on an item — most
+ // commonly the scrollbar — leave the popup alone. Otherwise the user can't
+ // grab the scrollbar without it collapsing.
+ if (ac.contains(e.target)) return;
  // Click outside the dropdown and outside any notes input → hide
  if (!e.target.classList || !e.target.classList.contains('notes-input')) {
  hideTagAutocomplete();
