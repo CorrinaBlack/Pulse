@@ -1,4 +1,4 @@
-<!-- Pulse v6.68 — 2026-06-20 | Three follow-ups to the v6.67 @-tag system. (1) Stat cards now reflect the chart's actual data: renderData computes chartData (tag filter narrowed by selectedRecordIds) BEFORE the avg/sys/dia/bpm reductions and uses it for those stats. So a tag filter or row selection now updates the AVG SYSTOLIC / DIASTOLIC / HEART RATE numbers in sync with what's plotted. (2) Autocomplete max-height tightened from 200px to 170px (≈5 items visible, scrollbar reveals the rest) so the popup no longer dominates the screen. (3) Two autocomplete viewport fixes: (a) if the popup would extend past the viewport bottom (common when the edit modal's notes textarea sits near the bottom), it now flips and renders ABOVE the input; (b) mousedown inside the popup but not on a .ta-item (the scrollbar case) no longer collapses the popup, so the user can actually grab the scrollbar to scroll through the full tag list. -->
+<!-- Pulse v6.69 — 2026-06-20 | Two selection bar polish items. (1) Hint copy refined from "Tap any row to filter the chart" to "Tap any row to filter the graph above" — clearer signal that the action affects the graph immediately above the bar. (2) Empty-state hint bar gets a pale yellow background (rgba(232,196,74,0.15) using the palette's --yellow #e8c44a) to mirror the warm-red has-selection bar's treatment — slightly higher alpha since yellow reads fainter on the cream surface. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -893,7 +893,7 @@
  display: flex;
  align-items: center;
  justify-content: space-between;
- background: transparent;
+ background: rgba(232,196,74,0.15);
  border: 1px solid var(--border);
  border-radius: var(--radius-sm);
  padding: 8px 14px;
@@ -2770,7 +2770,7 @@ function renderData() {
  ${selectedRecordIds.size > 0
  ? `<span class="sel-count"><strong>${selectedRecordIds.size}</strong>selected — chart shows only these</span>
  <button class="btn-clear-selections" onclick="clearSelections()">Clear Selections</button>`
- : `<span class="sel-hint">Tap any row to filter the chart · Shift-click for a range</span>`}
+ : `<span class="sel-hint">Tap any row to filter the graph above · Shift-click for a range</span>`}
  </div>
 
  <div class="data-table-wrap">
