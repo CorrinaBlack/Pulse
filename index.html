@@ -1,4 +1,4 @@
-<!-- Pulse v6.66 — 2026-06-20 | Multi-select redesign: dropped the checkbox column in favor of tap-to-select row interaction. New flow: tap any row to toggle its selection (row gets the warm tint, chart redraws on just selected rows); tap again to deselect. Shift-click on another row selects the contiguous range from the last-tapped row in the currently-visible sort order, ADDING the range to the existing selection (existing items stay). Plain tap also serves as the shift-click anchor reset. Works identically on iPad (single tap) and Mac (single click); shift-click is a desktop power-user shortcut layered on top. Cursor changes to pointer on row hover (desktop affordance). The selection bar is now always visible: when empty it shows a muted hint ("Tap any row to filter the chart · Shift-click for a range") so the feature is discoverable on first use; when 1+ are selected it shows the warm tint with count + Clear Selections button. Action buttons (edit / delete / notes ☰) call event.stopPropagation() so clicking them doesn't toggle row selection. Mobile-hide media query shifted back to nth-child(7) since the column count is back to 8. New state: lastSelectedId (shift-click anchor, cleared on deletion or clearSelections) and currentSortedRecords (snapshot of post-sort visible order, used by range select). -->
+<!-- Pulse v6.67 — 2026-06-20 | @-tag system in Notes (roadmap #5). Tags live INLINE in the notes string (no separate array on each record) — e.g., "Felt great today @GoodSleep @Ran3mi". Parsed via /@[A-Za-z0-9+]+/g. (1) Seed list of 26 tags (@4ShotsCoffee, @PostCoffee, @PreCoffee, @NoCoffee, @IrregularHeartBeats, @Whey, @Collagen, @Supplements, @Glycine+NAC, @GoodSleep, @PoorSleep, @Unwell, @Nausea, @Headache, @Migraine, @Weights, @Walked5mi, @Walked4mi, @Walked3mi, @Ran1mi-@Ran6mi, @LazyDay). Custom tags via @-typing get picked up automatically once they're in any record. (2) Autocomplete popup attached via event delegation on class="notes-input" — covers the manual entry input, edit modal textarea, and all OCR queue items. Arrow keys navigate, Enter/Tab inserts, Escape or space dismisses. Click-outside also dismisses. (3) Tag styling: a chip-style span (.tag-chip) wraps each @-tag in the notes column popup AND in the chart tooltip's notes line. (4) Filter dropdown: small funnel icon in the Notes column header (stopPropagation prevents triggering the sort onclick). Opens a dropdown listing all tags currently in use across records with their record counts. Clicking a tag narrows the table AND the chart to records containing that tag. A filter-active bar appears above the selection bar with a "Clear filter" button. Filter is independent of selection — selection still works on top of the filtered set. (5) Internal: extractTags(), renderNotesHtml(), getAvailableTagsWithCounts(), autocompleteState singleton, openTagFilter / setTagFilter / clearTagFilter / closeTagFilter. Editable seed list deferred to a follow-up per user. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1053,6 +1053,150 @@
  .cat-grid { grid-template-columns: 1fr 1fr; }
  .data-table th:nth-child(7), .data-table td:nth-child(7) { display: none; }
  }
+
+ /* TAGS — chip styling for tags inside notes display, autocomplete popup
+  shown while typing @ in any notes field, and filter dropdown opened
+  from the Notes column header. */
+ .tag-chip {
+ display: inline-block;
+ background: rgba(232,98,74,0.12);
+ color: var(--accent);
+ border-radius: 4px;
+ padding: 0 5px;
+ font-family: 'DM Mono', monospace;
+ font-size: 0.92em;
+ font-weight: 600;
+ white-space: nowrap;
+ }
+ .tag-autocomplete {
+ position: fixed;
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+ z-index: 10001;
+ max-height: 200px;
+ overflow-y: auto;
+ min-width: 200px;
+ padding: 4px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ }
+ .tag-autocomplete .ta-item {
+ padding: 6px 10px;
+ border-radius: 4px;
+ cursor: pointer;
+ color: var(--text);
+ }
+ .tag-autocomplete .ta-item.selected,
+ .tag-autocomplete .ta-item:hover { background: rgba(232,98,74,0.10); color: var(--accent); }
+ .tag-autocomplete .ta-empty {
+ padding: 8px 10px;
+ color: var(--text3);
+ font-style: italic;
+ }
+ .tag-filter-btn {
+ background: transparent;
+ border: 1px solid transparent;
+ border-radius: 4px;
+ padding: 2px 4px;
+ margin-left: 4px;
+ cursor: pointer;
+ color: var(--text3);
+ transition: var(--transition);
+ vertical-align: middle;
+ }
+ .tag-filter-btn:hover { color: var(--accent); border-color: var(--border); }
+ .tag-filter-btn.active { color: var(--accent); background: rgba(232,98,74,0.10); border-color: rgba(232,98,74,0.30); }
+ .tag-filter-btn svg { display: block; }
+ .tag-filter-dropdown {
+ position: fixed;
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+ z-index: 10001;
+ min-width: 220px;
+ max-height: 360px;
+ overflow-y: auto;
+ padding: 6px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ }
+ .tag-filter-dropdown .tfd-header {
+ display: flex;
+ justify-content: space-between;
+ align-items: center;
+ padding: 4px 8px 8px;
+ border-bottom: 1px solid var(--border);
+ margin-bottom: 6px;
+ font-family: 'DM Sans', sans-serif;
+ font-size: 11px;
+ color: var(--text3);
+ text-transform: uppercase;
+ letter-spacing: 0.05em;
+ }
+ .tag-filter-dropdown .tfd-close {
+ background: transparent;
+ border: none;
+ cursor: pointer;
+ color: var(--text3);
+ font-size: 16px;
+ line-height: 1;
+ padding: 0 4px;
+ }
+ .tag-filter-dropdown .tfd-close:hover { color: var(--accent); }
+ .tag-filter-dropdown .tfd-item {
+ padding: 6px 10px;
+ border-radius: 4px;
+ cursor: pointer;
+ color: var(--text);
+ display: flex;
+ justify-content: space-between;
+ align-items: center;
+ }
+ .tag-filter-dropdown .tfd-item:hover { background: rgba(232,98,74,0.08); color: var(--accent); }
+ .tag-filter-dropdown .tfd-item.active { background: rgba(232,98,74,0.14); color: var(--accent); font-weight: 700; }
+ .tag-filter-dropdown .tfd-count { color: var(--text3); font-size: 11px; }
+ .tag-filter-dropdown .tfd-item.active .tfd-count { color: var(--accent); }
+ .tag-filter-dropdown .tfd-empty { padding: 12px 10px; color: var(--text3); font-style: italic; font-family: 'DM Sans', sans-serif; text-align: center; }
+ .tag-filter-dropdown .tfd-clear {
+ width: 100%;
+ background: transparent;
+ border: 1px solid var(--border);
+ border-radius: 4px;
+ padding: 6px 10px;
+ margin-top: 6px;
+ cursor: pointer;
+ color: var(--text2);
+ font-size: 12px;
+ font-family: 'DM Sans', sans-serif;
+ transition: var(--transition);
+ }
+ .tag-filter-dropdown .tfd-clear:hover { color: var(--accent); border-color: var(--accent); }
+ .filter-active-bar {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ background: rgba(232,98,74,0.06);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+ padding: 6px 12px;
+ margin-bottom: 8px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ color: var(--text2);
+ }
+ .filter-active-bar .fab-clear {
+ background: transparent;
+ border: none;
+ color: var(--text3);
+ cursor: pointer;
+ font-size: 11px;
+ padding: 0 4px;
+ font-family: 'DM Sans', sans-serif;
+ }
+ .filter-active-bar .fab-clear:hover { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1195,7 +1339,7 @@
  <div class="ocr-field manual-field-dia"><label>Diastolic</label><input type="number" id="m-dia" placeholder="80" min="20" max="200" /></div>
  <div class="ocr-field manual-field-bpm"><label>BPM</label><input type="number" id="m-bpm" placeholder="72" min="20" max="250" /></div>
  <div class="manual-row-bottom">
- <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" placeholder="optional" /></div>
+ <div class="ocr-field manual-col-notes"><label>Notes</label><input type="text" id="m-notes" class="notes-input" placeholder="optional" /></div>
  </div>
  <div class="manual-actions">
  <button class="btn-sm btn-remove" onclick="clearManualForm()">Clear</button>
@@ -1235,7 +1379,7 @@
  <div class="ocr-field"><label>Systolic</label><input type="number" id="e-sys" placeholder="120" min="40" max="300" /></div>
  <div class="ocr-field"><label>Diastolic</label><input type="number" id="e-dia" placeholder="80" min="20" max="200" /></div>
  <div class="ocr-field"><label>BPM</label><input type="number" id="e-bpm" placeholder="72" min="20" max="250" /></div>
- <div class="ocr-field edit-row-notes"><label>Notes</label><textarea id="e-notes" rows="2" placeholder="optional"></textarea></div>
+ <div class="ocr-field edit-row-notes"><label>Notes</label><textarea id="e-notes" class="notes-input" rows="2" placeholder="optional"></textarea></div>
  <div class="edit-row-actions">
  <button class="btn-sm btn-cancel" onclick="closeModal()">Cancel</button>
  <button class="btn-sm btn-commit" onclick="saveEdit()">Save</button>
@@ -1285,6 +1429,8 @@
 
 <!-- CHART TOOLTIP -->
 <div class="chart-tooltip-popup" id="chartTooltip"></div>
+<div class="tag-autocomplete" id="tagAutocomplete" style="display:none"></div>
+<div class="tag-filter-dropdown" id="tagFilterDropdown" style="display:none"></div>
 
 <!-- TOAST CONTAINER -->
 <div class="toast-container" id="toastContainer"></div>
@@ -2272,7 +2418,7 @@ function renderOCRQueue() {
  <div class="ocr-field ocr-field-bpm"><label>BPM</label><input type="number" value="${escapeHtml(item.bpm)}" onchange="updateOCR('${item.qid}','bpm',this.value)" placeholder="—"></div>
  </div>
  <div class="ocr-row-bottom">
- <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" value="${escapeHtml(item.notes)}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
+ <div class="ocr-field ocr-col-notes"><label>Notes</label><input type="text" class="notes-input" value="${escapeHtml(item.notes)}" onchange="updateOCR('${item.qid}','notes',this.value)" placeholder="optional"></div>
  </div>
  <div class="ocr-actions">
  <button class="btn-sm btn-remove" onclick="removeOCRItem('${item.qid}')">Remove</button>
@@ -2564,6 +2710,10 @@ function renderData() {
  }
 
  let filtered = records;
+ if (currentTagFilter) {
+ const filterLower = currentTagFilter.toLowerCase();
+ filtered = filtered.filter(r => extractTags(r.notes).some(t => t.toLowerCase() === filterLower));
+ }
 
  const avgSys = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.sys, 0) / filtered.length) : '--';
  const avgDia = filtered.length ? Math.round(filtered.reduce((s,r) => s+r.dia, 0) / filtered.length) : '--';
@@ -2602,6 +2752,12 @@ function renderData() {
 
  <div style="height:24px"></div>
 
+ ${currentTagFilter ? `
+ <div class="filter-active-bar">
+ <span>Filtered to <span class="tag-chip">${escapeHtml(currentTagFilter)}</span> — ${filtered.length} reading${filtered.length === 1 ? '' : 's'}</span>
+ <button class="fab-clear" onclick="clearTagFilter()">Clear filter</button>
+ </div>` : ''}
+
  <div class="selection-bar ${selectedRecordIds.size > 0 ? 'has-selection' : ''}">
  ${selectedRecordIds.size > 0
  ? `<span class="sel-count"><strong>${selectedRecordIds.size}</strong>selected — chart shows only these</span>
@@ -2618,7 +2774,7 @@ function renderData() {
  <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
  <th class="sortable" onclick="setSort('bpm')">BPM ${sortArrow('bpm')}</th>
  <th class="sortable" onclick="setSort('device')">Device ${sortArrow('device')}</th>
- <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}</th>
+ <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}<button class="tag-filter-btn ${currentTagFilter ? 'active' : ''}" onclick="event.stopPropagation(); openTagFilter(event)" title="Filter by tag" aria-label="Filter by tag"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></th>
  <th class="sortable" onclick="setSort('category')">Category ${sortArrow('category')}</th>
  <th></th>
  </tr>
@@ -2696,6 +2852,289 @@ function clearSelections() {
  renderData();
 }
 
+// ─── TAGS ─────────────────────────────────────────────────────────────────────
+// Tags live INLINE inside the notes string (e.g., "Felt great today @GoodSleep
+// @Ran3mi"). They're parsed out via regex when needed for filtering or styling.
+// The seed list below seeds the @-autocomplete; users can also type custom
+// tags that get picked up automatically next time the filter dropdown opens.
+
+const SEED_TAGS = [
+ '@4ShotsCoffee', '@PostCoffee', '@PreCoffee', '@NoCoffee',
+ '@IrregularHeartBeats',
+ '@Whey', '@Collagen', '@Supplements', '@Glycine+NAC',
+ '@GoodSleep', '@PoorSleep',
+ '@Unwell', '@Nausea', '@Headache', '@Migraine',
+ '@Weights',
+ '@Walked5mi', '@Walked4mi', '@Walked3mi',
+ '@Ran1mi', '@Ran2mi', '@Ran3mi', '@Ran4mi', '@Ran5mi', '@Ran6mi',
+ '@LazyDay',
+];
+
+// Active tag filter (null = no filter). When set, renderData narrows the
+// table and chart to records whose notes contain this tag. Independent of
+// selectedRecordIds — selection still works on top of (within) the filtered set.
+let currentTagFilter = null;
+
+// Returns the @-tags found in a notes string, preserving original casing.
+function extractTags(notes) {
+ if (!notes) return [];
+ const matches = notes.match(/@[A-Za-z0-9+]+/g);
+ return matches || [];
+}
+
+// Escapes a notes string and wraps any @-tags in styled chips. Used by both
+// the notes popup and the chart tooltip so tags render consistently.
+function renderNotesHtml(notes) {
+ if (!notes) return '';
+ // Escape first, then run the regex over the escaped output — escapeHtml
+ // doesn't transform @, letters, digits, or +, so tag boundaries survive.
+ return escapeHtml(notes).replace(/@[A-Za-z0-9+]+/g, m => `<span class="tag-chip">${m}</span>`);
+}
+
+// All tags currently in use across records, deduped (case-insensitive). Each
+// entry is paired with its record count. The display name uses the casing of
+// the first record that mentioned it. SEED_TAGS that aren't yet used by any
+// record are NOT included — the filter dropdown only shows tags the user has
+// actually applied to a reading.
+function getAvailableTagsWithCounts() {
+ const map = new Map(); // lowerCase -> { display, count }
+ records.forEach(r => {
+ extractTags(r.notes).forEach(tag => {
+ const key = tag.toLowerCase();
+ const entry = map.get(key);
+ if (entry) entry.count++;
+ else map.set(key, { display: tag, count: 1 });
+ });
+ });
+ return [...map.values()].sort((a, b) => a.display.toLowerCase().localeCompare(b.display.toLowerCase()));
+}
+
+// ─── @-AUTOCOMPLETE ───────────────────────────────────────────────────────────
+// One global popup attached to whichever notes input the user is typing in.
+// Activated when the cursor sits right after a partial @-tag with no
+// intervening whitespace. Arrow keys navigate, Enter / Tab inserts, Escape
+// or any non-tag keystroke (space, punctuation) dismisses.
+
+const autocompleteState = {
+ input: null, // current input/textarea being augmented
+ atIdx: -1, // position of the @ that started this completion
+ prefix: '', // text typed after @ so far
+ matches: [], // current filtered list of SEED_TAGS
+ selectedIdx: 0, // index in matches[]
+};
+
+function isAutocompleteVisible() {
+ return document.getElementById('tagAutocomplete').style.display === 'block';
+}
+
+function hideTagAutocomplete() {
+ const ac = document.getElementById('tagAutocomplete');
+ ac.style.display = 'none';
+ autocompleteState.input = null;
+ autocompleteState.atIdx = -1;
+ autocompleteState.prefix = '';
+ autocompleteState.matches = [];
+ autocompleteState.selectedIdx = 0;
+}
+
+function showTagAutocomplete(input) {
+ const ac = document.getElementById('tagAutocomplete');
+ // Build merged candidate list: SEED_TAGS + any custom tags already in use
+ const used = getAvailableTagsWithCounts().map(t => t.display);
+ const seedLower = new Set(SEED_TAGS.map(t => t.toLowerCase()));
+ const customs = used.filter(t => !seedLower.has(t.toLowerCase()));
+ const candidates = [...SEED_TAGS, ...customs];
+ const prefixLower = autocompleteState.prefix.toLowerCase();
+ const matches = prefixLower === ''
+ ? candidates
+ : candidates.filter(t => t.toLowerCase().startsWith('@' + prefixLower));
+ autocompleteState.matches = matches;
+ if (autocompleteState.selectedIdx >= matches.length) autocompleteState.selectedIdx = 0;
+ // Position below the input
+ const rect = input.getBoundingClientRect();
+ ac.style.left = Math.max(8, rect.left) + 'px';
+ ac.style.top = (rect.bottom + 4) + 'px';
+ ac.style.minWidth = Math.max(200, rect.width) + 'px';
+ if (matches.length === 0) {
+ ac.innerHTML = '<div class="ta-empty">No matching tags — keep typing to use a custom tag</div>';
+ } else {
+ ac.innerHTML = matches.map((tag, idx) =>
+ `<div class="ta-item${idx === autocompleteState.selectedIdx ? ' selected' : ''}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</div>`
+ ).join('');
+ }
+ ac.style.display = 'block';
+}
+
+function handleTagInput(e) {
+ const input = e.target;
+ const pos = input.selectionStart;
+ const before = input.value.substring(0, pos);
+ const atIdx = before.lastIndexOf('@');
+ if (atIdx === -1) { hideTagAutocomplete(); return; }
+ const between = before.substring(atIdx + 1);
+ // Only valid tag characters between @ and cursor
+ if (!/^[A-Za-z0-9+]*$/.test(between)) { hideTagAutocomplete(); return; }
+ // @ must be at start of input, or preceded by whitespace or punctuation
+ if (atIdx > 0) {
+ const ch = before[atIdx - 1];
+ if (/[A-Za-z0-9]/.test(ch)) { hideTagAutocomplete(); return; }
+ }
+ autocompleteState.input = input;
+ autocompleteState.atIdx = atIdx;
+ autocompleteState.prefix = between;
+ showTagAutocomplete(input);
+}
+
+function handleTagKeyDown(e) {
+ if (!isAutocompleteVisible() || autocompleteState.input !== e.target) return;
+ const n = autocompleteState.matches.length;
+ if (e.key === 'ArrowDown') {
+ e.preventDefault();
+ if (n > 0) {
+ autocompleteState.selectedIdx = (autocompleteState.selectedIdx + 1) % n;
+ showTagAutocomplete(e.target);
+ }
+ } else if (e.key === 'ArrowUp') {
+ e.preventDefault();
+ if (n > 0) {
+ autocompleteState.selectedIdx = (autocompleteState.selectedIdx - 1 + n) % n;
+ showTagAutocomplete(e.target);
+ }
+ } else if (e.key === 'Enter' || e.key === 'Tab') {
+ if (n > 0) {
+ e.preventDefault();
+ insertSelectedTag();
+ }
+ } else if (e.key === 'Escape') {
+ e.preventDefault();
+ hideTagAutocomplete();
+ }
+}
+
+function insertSelectedTag() {
+ const tag = autocompleteState.matches[autocompleteState.selectedIdx];
+ if (!tag) return;
+ const input = autocompleteState.input;
+ const start = autocompleteState.atIdx;
+ const end = input.selectionStart;
+ const value = input.value;
+ const newValue = value.substring(0, start) + tag + ' ' + value.substring(end);
+ input.value = newValue;
+ const newPos = start + tag.length + 1;
+ input.selectionStart = input.selectionEnd = newPos;
+ hideTagAutocomplete();
+ // Trigger change for inputs whose updateOCR / saveRecord handlers listen
+ // on 'change' (e.g., OCR queue rows). 'input' event also dispatched so any
+ // future listeners receive updates.
+ input.dispatchEvent(new Event('input', { bubbles: true }));
+ input.dispatchEvent(new Event('change', { bubbles: true }));
+ input.focus();
+}
+
+// Mouse click on an autocomplete item (mousedown so it fires before blur
+// hides the dropdown). Walks the click target up to the .ta-item to allow
+// clicks on either the row itself or anything inside it.
+document.addEventListener('mousedown', e => {
+ const ac = document.getElementById('tagAutocomplete');
+ if (!ac || ac.style.display !== 'block') return;
+ const item = e.target.closest('.ta-item');
+ if (item && ac.contains(item)) {
+ e.preventDefault(); // keep focus on the input
+ const tag = item.getAttribute('data-tag');
+ const idx = autocompleteState.matches.indexOf(tag);
+ if (idx !== -1) {
+ autocompleteState.selectedIdx = idx;
+ insertSelectedTag();
+ }
+ return;
+ }
+ // Click outside the dropdown and outside any notes input → hide
+ if (!e.target.classList || !e.target.classList.contains('notes-input')) {
+ hideTagAutocomplete();
+ }
+});
+
+// Event delegation for all .notes-input fields (manual entry, edit modal,
+// OCR queue items — covers dynamically-rendered inputs too).
+document.addEventListener('input', e => {
+ if (e.target && e.target.classList && e.target.classList.contains('notes-input')) {
+ handleTagInput(e);
+ }
+});
+document.addEventListener('keydown', e => {
+ if (e.target && e.target.classList && e.target.classList.contains('notes-input')) {
+ handleTagKeyDown(e);
+ }
+}, true); // capture phase so Enter/Tab don't first submit or shift focus
+
+// ─── TAG FILTER DROPDOWN ──────────────────────────────────────────────────────
+function openTagFilter(event) {
+ const btn = event.currentTarget;
+ const dd = document.getElementById('tagFilterDropdown');
+ const tags = getAvailableTagsWithCounts();
+ const activeLower = (currentTagFilter || '').toLowerCase();
+ const itemsHtml = tags.length === 0
+ ? `<div class="tfd-empty">No tags yet — type @ in any notes field to add one.</div>`
+ : tags.map(t => {
+ const isActive = t.display.toLowerCase() === activeLower;
+ return `<div class="tfd-item${isActive ? ' active' : ''}" data-tag="${escapeHtml(t.display)}">
+ <span>${escapeHtml(t.display)}</span>
+ <span class="tfd-count">${t.count}</span>
+ </div>`;
+ }).join('');
+ dd.innerHTML = `
+ <div class="tfd-header">
+ <span>Filter by tag</span>
+ <button class="tfd-close" onclick="closeTagFilter()" aria-label="Close">×</button>
+ </div>
+ <div>${itemsHtml}</div>
+ ${currentTagFilter ? `<button class="tfd-clear" onclick="clearTagFilter()">Clear filter</button>` : ''}
+ `;
+ // Position below the button, right-aligned so it doesn't get clipped at the
+ // right edge of narrower viewports.
+ const rect = btn.getBoundingClientRect();
+ dd.style.display = 'block';
+ const ddRect = dd.getBoundingClientRect();
+ let left = rect.right - ddRect.width;
+ if (left < 8) left = 8;
+ if (left + ddRect.width > window.innerWidth - 8) left = window.innerWidth - ddRect.width - 8;
+ dd.style.left = left + 'px';
+ dd.style.top = (rect.bottom + 4) + 'px';
+}
+
+function closeTagFilter() {
+ document.getElementById('tagFilterDropdown').style.display = 'none';
+}
+
+function setTagFilter(tag) {
+ // Toggle behavior — clicking the active tag clears the filter.
+ currentTagFilter = (currentTagFilter && currentTagFilter.toLowerCase() === tag.toLowerCase())
+ ? null : tag;
+ closeTagFilter();
+ renderData();
+}
+
+function clearTagFilter() {
+ currentTagFilter = null;
+ closeTagFilter();
+ renderData();
+}
+
+// Click on a tag filter dropdown item (delegated) — and click-outside to close.
+document.addEventListener('click', e => {
+ const dd = document.getElementById('tagFilterDropdown');
+ if (!dd || dd.style.display !== 'block') return;
+ const item = e.target.closest('.tfd-item');
+ if (item && dd.contains(item)) {
+ setTagFilter(item.getAttribute('data-tag'));
+ return;
+ }
+ // Don't close if click was on the filter button (its onclick reopens) or
+ // inside the dropdown's own controls.
+ if (e.target.closest('.tag-filter-btn') || dd.contains(e.target)) return;
+ closeTagFilter();
+});
+
 function renderTable(filtered) {
  const col = currentSort.column;
  const dir = currentSort.direction;
@@ -2769,7 +3208,7 @@ function showNotePopup(event, recordId) {
  const tooltip = document.getElementById('chartTooltip');
  tooltip.innerHTML = `
  <div class="tt-meta" style="margin-bottom:6px">Note</div>
- <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;max-width:320px">${escapeHtml(r.notes||'')}</div>
+ <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;max-width:320px">${renderNotesHtml(r.notes||'')}</div>
  `;
  tooltip.style.display = 'block';
  const ttRect = tooltip.getBoundingClientRect();
@@ -2937,7 +3376,7 @@ function renderChart(series) {
  ${r.bpm ? `<div class="tt-row"><span>BPM</span> <strong style="color:var(--c-bpm)">${r.bpm}</strong></div>` : ''}
  <div class="tt-divider"></div>
  <div class="tt-meta">${dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})} · ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
- ${r.notes ? `<div class="tt-divider tt-divider-notes"></div><div class="tt-notes">${escapeHtml(r.notes)}</div>` : ''}
+ ${r.notes ? `<div class="tt-divider tt-divider-notes"></div><div class="tt-notes">${renderNotesHtml(r.notes)}</div>` : ''}
  `;
  tooltip.style.display = 'block';
  const ttRect = tooltip.getBoundingClientRect();
