@@ -1,4 +1,4 @@
-<!-- Pulse v6.79 — 2026-06-29 | Row-selection clear moves inline with the info icon. (1) When rows are selected, "N selected" + ✕ now sit immediately to the LEFT of the info ⓘ on the same right-aligned row, replacing the previous "below the info icon on its own row" placement. (2) The count text + ✕ rendered in var(--accent) red (matching the systolic series and the y-axis ↓ 120 marker) to draw attention to the active filtering. (3) Tag filter row unchanged — still its own row below when active. New CSS: .chart-top-row flex container, .chart-selection-inline with red color + 600 weight. -->
+<!-- Pulse v6.80 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1136,6 +1136,7 @@
  white-space: nowrap;
  }
  .tag-autocomplete {
+ display: none;
  position: fixed;
  background: var(--surface);
  border: 1px solid var(--border);
@@ -1149,6 +1150,7 @@
  font-family: 'DM Mono', monospace;
  font-size: 12px;
  }
+ .tag-autocomplete.shown { display: block; }
  .tag-autocomplete .ta-item {
  padding: 6px 10px;
  border-radius: 4px;
@@ -1177,6 +1179,7 @@
  .tag-filter-btn.active { color: var(--accent); background: rgba(232,98,74,0.10); border-color: rgba(232,98,74,0.30); }
  .tag-filter-btn svg { display: block; }
  .tag-filter-dropdown {
+ display: none;
  position: fixed;
  background: var(--surface);
  border: 1px solid var(--border);
@@ -1190,6 +1193,7 @@
  font-family: 'DM Mono', monospace;
  font-size: 12px;
  }
+ .tag-filter-dropdown.shown { display: block; }
  .tag-filter-dropdown .tfd-header {
  display: flex;
  justify-content: space-between;
@@ -1241,11 +1245,6 @@
  transition: var(--transition);
  }
  .tag-filter-dropdown .tfd-clear:hover { color: var(--accent); border-color: var(--accent); }
- .filter-active-bar {
- /* DEPRECATED in v6.78 — replaced by .chart-controls above the chart.
- Class kept reserved for backwards-compat with any external references; no
- styling. */
- }
 </style>
 </head>
 <body>
@@ -1479,8 +1478,8 @@
 
 <!-- CHART TOOLTIP -->
 <div class="chart-tooltip-popup" id="chartTooltip"></div>
-<div class="tag-autocomplete" id="tagAutocomplete" style="display:none"></div>
-<div class="tag-filter-dropdown" id="tagFilterDropdown" style="display:none"></div>
+<div class="tag-autocomplete" id="tagAutocomplete"></div>
+<div class="tag-filter-dropdown" id="tagFilterDropdown"></div>
 
 <!-- TOAST CONTAINER -->
 <div class="toast-container" id="toastContainer"></div>
@@ -1532,10 +1531,20 @@ const CONFIG = {
 const STORAGE_KEY = CONFIG.STORAGE_KEY;
 const DATA_VERSION = 1;
 
+// localStorage wrapper — silently no-ops if storage throws (sandboxed iframes,
+// strict private-mode quirks, quota errors). get() takes an optional fallback
+// returned when the key is missing or storage is inaccessible. Boot script
+// keeps its own try/catch because CONFIG isn't defined yet at that point.
+const store = {
+ get(k, fb = null) { try { return localStorage.getItem(k) ?? fb; } catch { return fb; } },
+ set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+ del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
 function loadData() {
- try {
- const raw = localStorage.getItem(STORAGE_KEY);
+ const raw = store.get(STORAGE_KEY);
  if (!raw) return [];
+ try {
  const parsed = JSON.parse(raw);
  // Legacy format: stored as a bare array. Migrate to versioned envelope.
  if (Array.isArray(parsed)) return migrateData(parsed, 0);
@@ -1545,7 +1554,7 @@ function loadData() {
 }
 
 function saveData(data) {
- localStorage.setItem(STORAGE_KEY, JSON.stringify({
+ store.set(STORAGE_KEY, JSON.stringify({
  version: DATA_VERSION,
  records: data,
  }));
@@ -1795,12 +1804,12 @@ dropZone.addEventListener('drop', e => {
 // ─── API KEY MANAGEMENT ───────────────────────────────────────────────────────
 const API_KEY_STORAGE = CONFIG.API_KEY_STORAGE;
 
-function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
+function getApiKey() { return store.get(API_KEY_STORAGE, ''); }
 
 function saveApiKey() {
  const val = document.getElementById('apiKeyInput').value.trim();
  if (!val) { toast('Please enter an API key.', 'warning'); return; }
- localStorage.setItem(API_KEY_STORAGE, val);
+ store.set(API_KEY_STORAGE, val);
  updateApiKeyBtn();
  toggleApiPanel();
  toast('API key saved.', 'success');
@@ -1808,7 +1817,7 @@ function saveApiKey() {
 }
 
 function clearApiKey() {
- localStorage.removeItem(API_KEY_STORAGE);
+ store.del(API_KEY_STORAGE);
  document.getElementById('apiKeyInput').value = '';
  updateApiKeyBtn();
  updatePhotoEntryVisibility();
@@ -2642,14 +2651,13 @@ async function clearAllRecords() {
 // renderChart at render time — toggling theme just needs a renderData() to redraw
 // the chart with the correct palette.
 function loadTheme() {
- try { return localStorage.getItem(CONFIG.THEME_STORAGE) || 'light'; }
- catch(e) { return 'light'; }
+ return store.get(CONFIG.THEME_STORAGE, 'light');
 }
 
 function applyTheme(theme) {
  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
  else document.documentElement.removeAttribute('data-theme');
- try { localStorage.setItem(CONFIG.THEME_STORAGE, theme); } catch(e) {}
+ store.set(CONFIG.THEME_STORAGE, theme);
  renderThemeToggle();
 }
 
@@ -2665,6 +2673,18 @@ function toggleTheme() {
 const _sunSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M4.93 19.07l1.41-1.41"/><path d="M17.66 6.34l1.41-1.41"/></svg>';
 const _moonSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>';
 
+// Shared chart-controls icons — used in renderData() and the table-header
+// tag-filter button. Centralized so all instances stay visually consistent.
+const _xSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+const _infoSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="7" x2="12" y2="7.01"/></svg>';
+const _funnelSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>';
+
+// Stat-card pattern indicator that mirrors the chart line's stroke style. dash
+// is the stroke-dasharray (empty string → solid). Color must be a CSS-resolvable
+// value (string literal or var()).
+const statPatternSvg = (color, dash = '') =>
+ `<svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="${color}" stroke-width="2.5" stroke-linecap="round"${dash ? ` stroke-dasharray="${dash}"` : ''}/></svg>`;
+
 function renderThemeToggle() {
  const btn = document.getElementById('themeToggle');
  if (!btn) return;
@@ -2679,9 +2699,9 @@ function renderThemeToggle() {
 // localStorage when v6.46 first loads) are auto-onboarded so they don't get a
 // surprise welcome screen.
 function checkOnboarding() {
- if (localStorage.getItem(CONFIG.ONBOARD_STORAGE) === 'true') return;
+ if (store.get(CONFIG.ONBOARD_STORAGE) === 'true') return;
  if (records.length > 0 || getApiKey()) {
- localStorage.setItem(CONFIG.ONBOARD_STORAGE, 'true');
+ store.set(CONFIG.ONBOARD_STORAGE, 'true');
  return;
  }
  document.getElementById('onboardModal').classList.add('open');
@@ -2689,7 +2709,7 @@ function checkOnboarding() {
 }
 
 function skipOnboarding() {
- localStorage.setItem(CONFIG.ONBOARD_STORAGE, 'true');
+ store.set(CONFIG.ONBOARD_STORAGE, 'true');
  document.getElementById('onboardApiKey').value = '';
  document.getElementById('onboardModal').classList.remove('open');
  updatePhotoEntryVisibility();
@@ -2702,10 +2722,10 @@ function completeOnboarding() {
  toast('That doesn\'t look like an Anthropic key — it should start with sk-ant-.', 'warning');
  return;
  }
- localStorage.setItem(CONFIG.API_KEY_STORAGE, key);
+ store.set(CONFIG.API_KEY_STORAGE, key);
  toast('API key saved.', 'success');
  }
- localStorage.setItem(CONFIG.ONBOARD_STORAGE, 'true');
+ store.set(CONFIG.ONBOARD_STORAGE, 'true');
  document.getElementById('onboardApiKey').value = '';
  document.getElementById('onboardModal').classList.remove('open');
  updateApiKeyBtn();
@@ -2785,17 +2805,17 @@ function renderData() {
  <div class="stat-card">
  <div class="stat-label">Avg Systolic</div>
  <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
- <svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="var(--c-systolic)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="16 6 16 6 2 6"/></svg>
+ ${statPatternSvg('var(--c-systolic)', '16 6 16 6 2 6')}
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Diastolic</div>
  <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
- <svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="var(--c-diastolic)" stroke-width="2.5" stroke-linecap="round"/></svg>
+ ${statPatternSvg('var(--c-diastolic)')}
  </div>
  <div class="stat-card">
  <div class="stat-label">Avg Heart Rate</div>
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
- <svg class="stat-pattern" width="48" height="6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="1" y1="3" x2="47" y2="3" stroke="var(--c-bpm)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="4 4"/></svg>
+ ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
  </div>
  ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
@@ -2805,33 +2825,17 @@ function renderData() {
  ${selectedRecordIds.size > 0 ? `
  <div class="chart-selection-inline">
  <span>${selectedRecordIds.size} selected</span>
- <button class="chart-clear-btn" onclick="clearSelections()" aria-label="Clear row selections">
- <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
- <line x1="6" y1="6" x2="18" y2="18"/>
- <line x1="18" y1="6" x2="6" y2="18"/>
- </svg>
- </button>
+ <button class="chart-clear-btn" onclick="clearSelections()" aria-label="Clear row selections">${_xSvg}</button>
  </div>` : ''}
  <div class="chart-info-wrap">
- <button class="chart-info-btn" onclick="toggleChartHint(event)" aria-label="How to filter the chart">
- <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
- <circle cx="12" cy="12" r="10"/>
- <line x1="12" y1="11" x2="12" y2="16"/>
- <line x1="12" y1="7" x2="12" y2="7.01"/>
- </svg>
- </button>
+ <button class="chart-info-btn" onclick="toggleChartHint(event)" aria-label="How to filter the chart">${_infoSvg}</button>
  <div class="chart-hint-popup" id="chartHintPopup">Tap any row to filter the graph above · Shift-click for a range</div>
  </div>
  </div>
  ${currentTagFilter ? `
  <div class="chart-control-row">
  <span class="tag-chip">${escapeHtml(currentTagFilter)}</span>
- <button class="chart-clear-btn" onclick="clearTagFilter()" aria-label="Clear tag filter">
- <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
- <line x1="6" y1="6" x2="18" y2="18"/>
- <line x1="18" y1="6" x2="6" y2="18"/>
- </svg>
- </button>
+ <button class="chart-clear-btn" onclick="clearTagFilter()" aria-label="Clear tag filter">${_xSvg}</button>
  </div>` : ''}
  </div>
 
@@ -2855,7 +2859,7 @@ function renderData() {
  <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
  <th class="sortable" onclick="setSort('bpm')">BPM ${sortArrow('bpm')}</th>
  <th class="sortable" onclick="setSort('device')">Device ${sortArrow('device')}</th>
- <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}<button class="tag-filter-btn ${currentTagFilter ? 'active' : ''}" onclick="event.stopPropagation(); openTagFilter(event)" title="Filter by tag" aria-label="Filter by tag"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></th>
+ <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}<button class="tag-filter-btn ${currentTagFilter ? 'active' : ''}" onclick="event.stopPropagation(); openTagFilter(event)" title="Filter by tag" aria-label="Filter by tag">${_funnelSvg}</button></th>
  <th class="sortable" onclick="setSort('category')">Category ${sortArrow('category')}</th>
  <th></th>
  </tr>
@@ -3002,12 +3006,12 @@ const autocompleteState = {
 };
 
 function isAutocompleteVisible() {
- return document.getElementById('tagAutocomplete').style.display === 'block';
+ return document.getElementById('tagAutocomplete').classList.contains('shown');
 }
 
 function hideTagAutocomplete() {
  const ac = document.getElementById('tagAutocomplete');
- ac.style.display = 'none';
+ ac.classList.remove('shown');
  autocompleteState.input = null;
  autocompleteState.atIdx = -1;
  autocompleteState.prefix = '';
@@ -3041,7 +3045,7 @@ function showTagAutocomplete(input) {
  ac.style.left = Math.max(8, rect.left) + 'px';
  ac.style.minWidth = Math.max(200, rect.width) + 'px';
  ac.style.top = (rect.bottom + 4) + 'px';
- ac.style.display = 'block';
+ ac.classList.add('shown');
  // Measure after display so max-height is applied
  const acRect = ac.getBoundingClientRect();
  if (acRect.bottom > window.innerHeight - 8) {
@@ -3124,7 +3128,7 @@ function insertSelectedTag() {
 // clicks on either the row itself or anything inside it.
 document.addEventListener('mousedown', e => {
  const ac = document.getElementById('tagAutocomplete');
- if (!ac || ac.style.display !== 'block') return;
+ if (!ac || !ac.classList.contains('shown')) return;
  const item = e.target.closest('.ta-item');
  if (item && ac.contains(item)) {
  e.preventDefault(); // keep focus on the input
@@ -3185,7 +3189,7 @@ function openTagFilter(event) {
  // Position below the button, right-aligned so it doesn't get clipped at the
  // right edge of narrower viewports.
  const rect = btn.getBoundingClientRect();
- dd.style.display = 'block';
+ dd.classList.add('shown');
  const ddRect = dd.getBoundingClientRect();
  let left = rect.right - ddRect.width;
  if (left < 8) left = 8;
@@ -3195,7 +3199,7 @@ function openTagFilter(event) {
 }
 
 function closeTagFilter() {
- document.getElementById('tagFilterDropdown').style.display = 'none';
+ document.getElementById('tagFilterDropdown').classList.remove('shown');
 }
 
 function setTagFilter(tag) {
@@ -3215,7 +3219,7 @@ function clearTagFilter() {
 // Click on a tag filter dropdown item (delegated) — and click-outside to close.
 document.addEventListener('click', e => {
  const dd = document.getElementById('tagFilterDropdown');
- if (!dd || dd.style.display !== 'block') return;
+ if (!dd || !dd.classList.contains('shown')) return;
  const item = e.target.closest('.tfd-item');
  if (item && dd.contains(item)) {
  setTagFilter(item.getAttribute('data-tag'));
@@ -3896,10 +3900,10 @@ document.addEventListener('keydown', (e) => {
  if (hint && hint.classList.contains('shown')) { hint.classList.remove('shown'); e.preventDefault(); return; }
  // Tag autocomplete (transient)
  const ac = document.getElementById('tagAutocomplete');
- if (ac && ac.style.display === 'block') { hideTagAutocomplete(); e.preventDefault(); return; }
+ if (ac && ac.classList.contains('shown')) { hideTagAutocomplete(); e.preventDefault(); return; }
  // Tag filter dropdown (transient)
  const tfd = document.getElementById('tagFilterDropdown');
- if (tfd && tfd.style.display === 'block') { closeTagFilter(); e.preventDefault(); return; }
+ if (tfd && tfd.classList.contains('shown')) { closeTagFilter(); e.preventDefault(); return; }
  // Note popup (uses the chart-tooltip element for both chart popup and notes)
  const tt = document.getElementById('chartTooltip');
  if (tt && tt.style.display === 'block') { hideTooltip(); e.preventDefault(); return; }
@@ -3921,5 +3925,73 @@ updateCameraButtonVisibility();
 checkOnboarding();
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js"></script>
+
+<!--
+═══════════════════════════════════════════════════════════════════════════════
+CHANGELOG
+═══════════════════════════════════════════════════════════════════════════════
+
+v6.80 — 2026-06-29 — Code-cleanup pass (no behavior change).
+ • Deleted dead .filter-active-bar placeholder rule.
+ • Centralized localStorage access in a `store` wrapper (~11 call sites);
+ all reads tolerate sandboxed/blocked storage, all writes silently no-op.
+ Boot script keeps its own try/catch — CONFIG isn't defined at that point.
+ • Extracted repeated SVG icons into `_xSvg`, `_infoSvg`, `_funnelSvg`
+ constants and a `statPatternSvg(color, dash)` helper. Removed three
+ inline copies of the X icon and three inline stat-pattern SVGs.
+ • Standardized transient-popup visibility on .shown class pattern —
+ tagAutocomplete and tagFilterDropdown converted from inline
+ style.display toggling to classList.add/remove('shown'), matching the
+ v6.78 chartHintPopup approach. Inline style="display:none" removed
+ from both elements; CSS rules updated.
+ • Trimmed line-1 version comment; full history lives here.
+
+v6.79 — Row-selection clear moves inline with the info icon. "N selected" +
+ ✕ now sit immediately to the LEFT of the info ⓘ on the same right-aligned
+ row in var(--accent) red. Tag filter row unchanged.
+
+v6.78 — Chart controls redesign — replaces the always-visible selection-bar
+ / filter-active-bar elements with a compact right-aligned column above the
+ chart. Line-drawn info ⓘ (hover/tap shows hint), ✕ for active selection,
+ [@tag] ✕ for active tag filter.
+
+v6.77 — In-canvas reference-line text labels removed; y-axis 120/80 ticks
+ get colored ↓ prefix instead.
+
+v6.76 — Y-axis 120 tinted red, 80 tinted blue; chart annotation text
+ "Max Sys 120" → "Ideal Sys ↓ 120".
+
+v6.75 — Recommended-max line width 1→1.5px, alpha 0.35→0.4; labels at full
+ saturation.
+
+v6.74 — One-time migration to clear auto-saved 'dark' from v6.45–v6.69 era,
+ so existing users get the new light default. pulse_theme_migrated_v674
+ marker prevents re-running. v6.73 diagnostic banner removed.
+
+v6.73 — Diagnostic build (banner removed in v6.74).
+
+v6.72 — Real fix for "still opens dark in chat preview": :root now holds
+ LIGHT palette (no-JS default), :root[data-theme="dark"] overrides only
+ when boot script explicitly opts in.
+
+v6.71 — Earlier try/catch reshuffle around localStorage (superseded by v6.72).
+
+v6.70 — Default light theme + global Esc handler + recommended-max chart
+ reference lines at 120/80.
+
+v6.69 — Selection bar polish (pre-redesign): hint copy + pale-yellow empty
+ state.
+
+v6.68 — Stats follow chartData (filter+selection narrowed) not filtered.
+ Autocomplete dismissal/positioning polish.
+
+v6.67 — @-tag system: inline-in-notes tags, autocomplete, tag-filter
+ dropdown from Notes column header, chip styling.
+
+v6.66 — Multi-select redesign: tap row to toggle selection, shift-click for
+ range. Selection bar always visible.
+
+v6.65 and earlier — see git history.
+-->
 </body>
 </html>
