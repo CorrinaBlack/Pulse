@@ -1,4 +1,4 @@
-<!-- Pulse v6.69 — 2026-06-20 | Two selection bar polish items. (1) Hint copy refined from "Tap any row to filter the chart" to "Tap any row to filter the graph above" — clearer signal that the action affects the graph immediately above the bar. (2) Empty-state hint bar gets a pale yellow background (rgba(232,196,74,0.15) using the palette's --yellow #e8c44a) to mirror the warm-red has-selection bar's treatment — slightly higher alpha since yellow reads fainter on the cream surface. -->
+<!-- Pulse v6.74 — 2026-06-29 | Real fix for the dark-default issue. v6.73's diagnostic banner revealed the actual cause: localStorage had 'dark' explicitly stored from old auto-save behavior (every v6.45–v6.69 load called applyTheme(loadTheme()) with a 'dark' fallback and wrote the result to storage, so every existing user has 'dark' baked in even if they never deliberately toggled). v6.72's CSS-default-light fix works for genuinely fresh users; v6.74 adds a one-time migration so existing users get the new default too. Boot script now checks for a 'pulse_theme_migrated_v674' marker; if absent, it removes the auto-saved theme value and sets the marker. Subsequent loads skip the migration and honor whatever theme the user has chosen since. Anyone who genuinely prefers dark just toggles once and it persists normally. v6.73's pink diagnostic banner removed. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,27 +9,44 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 <script>
- // Apply saved theme BEFORE first paint to avoid a dark→light flash on light-theme
- // sessions. Literal 'pulse_theme' duplicates CONFIG.THEME_STORAGE below — kept in
- // sync by hand because CONFIG isn't defined yet at this point in load order.
+ // Apply saved theme BEFORE first paint to avoid a light→dark flash on dark-theme
+ // sessions. The CSS-level default is LIGHT (see :root values) — this script
+ // only opts INTO dark when the user has explicitly stored 'dark'.
+ //
+ // One-time migration: every v6.45–v6.69 load called applyTheme(loadTheme()),
+ // which had a 'dark' fallback and unconditionally wrote the result to
+ // localStorage. That means every existing user has 'dark' stored even if
+ // they never deliberately chose it. On first v6.74+ load we wipe that
+ // auto-saved value so the new light default takes effect; anyone who really
+ // prefers dark just re-toggles once and it persists normally afterward.
+ //
+ // Literal 'pulse_theme' duplicates CONFIG.THEME_STORAGE below — kept in sync
+ // by hand because CONFIG isn't defined yet at this point in load order.
  (function(){
- try { if (localStorage.getItem('pulse_theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); }
- catch(e) {}
+ try {
+ if (!localStorage.getItem('pulse_theme_migrated_v674')) {
+ localStorage.removeItem('pulse_theme');
+ localStorage.setItem('pulse_theme_migrated_v674', '1');
+ }
+ } catch(e) {}
+ let saved = null;
+ try { saved = localStorage.getItem('pulse_theme'); } catch(e) {}
+ if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
  })();
 </script>
 
 <style>
  :root {
- --bg: #0f0f11;
- --surface: #18181c;
- --surface2: #222228;
- --surface3: #2a2a32;
- --border: #2e2e38;
+ --bg: #faf7f2;
+ --surface: #ffffff;
+ --surface2: #f6f1e7;
+ --surface3: #ece5d2;
+ --border: #d9d2c0;
  --accent: #e8624a;
  --accent2: #f0a070;
- --text: #f0ede8;
- --text2: #a09a94;
- --text3: #605a54;
+ --text: #2a2620;
+ --text2: #6b665f;
+ --text3: #9b948c;
  --green: #5db87a;
  --yellow: #e8c44a;
  --orange: #e8924a;
@@ -38,37 +55,37 @@
  /* Chart series colors — read inside renderChart() at render time so theme
  changes redraw the chart with the correct palette without manual cache busts. */
  --c-systolic: #e8624a;
- --c-diastolic: #6ab8d4;
- --c-bpm: #5db87a;
- --c-systolic-fill: rgba(232,98,74,0.12);
- --c-diastolic-fill: rgba(106,184,212,0.07);
- --chart-grid-x: rgba(255,255,255,0.04);
- --chart-grid-y: rgba(255,255,255,0.06);
- --radius: 12px;
- --radius-sm: 8px;
- --transition: 0.2s ease;
- }
-
- /* Light theme — warm cream palette. Terracotta accent + category colors unchanged
- (they hit usable contrast on cream). Diastolic and BPM chart series shifted to
- darker shades to stay legible against white-ish surfaces. Activated by setting
- [data-theme="light"] on <html>; the inline boot script in <head> applies the
- saved preference before first paint so there's no flash. */
- :root[data-theme="light"] {
- --bg: #faf7f2;
- --surface: #ffffff;
- --surface2: #f6f1e7;
- --surface3: #ece5d2;
- --border: #d9d2c0;
- --text: #2a2620;
- --text2: #6b665f;
- --text3: #9b948c;
  --c-diastolic: #3a8aaa;
  --c-bpm: #3a8e58;
  --c-systolic-fill: rgba(232,98,74,0.10);
  --c-diastolic-fill: rgba(58,138,170,0.10);
  --chart-grid-x: rgba(0,0,0,0.05);
  --chart-grid-y: rgba(0,0,0,0.07);
+ --radius: 12px;
+ --radius-sm: 8px;
+ --transition: 0.2s ease;
+ }
+
+ /* Dark theme — original deep palette. Activated by setting [data-theme="dark"]
+ on <html>; the inline boot script in <head> applies the saved preference before
+ first paint so there's no flash. The CSS default (no attribute) is LIGHT so
+ sandboxed contexts that block inline scripts (chat-preview iframes, strict
+ embeds) still render the intended cream palette. */
+ :root[data-theme="dark"] {
+ --bg: #0f0f11;
+ --surface: #18181c;
+ --surface2: #222228;
+ --surface3: #2a2a32;
+ --border: #2e2e38;
+ --text: #f0ede8;
+ --text2: #a09a94;
+ --text3: #605a54;
+ --c-diastolic: #6ab8d4;
+ --c-bpm: #5db87a;
+ --c-systolic-fill: rgba(232,98,74,0.12);
+ --c-diastolic-fill: rgba(106,184,212,0.07);
+ --chart-grid-x: rgba(255,255,255,0.04);
+ --chart-grid-y: rgba(255,255,255,0.06);
  }
 
  * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1200,6 +1217,7 @@
 </style>
 </head>
 <body>
+
 
 <header>
  <div class="logo">BP <span>Pulse</span></div>
@@ -2592,13 +2610,14 @@ async function clearAllRecords() {
 // renderChart at render time — toggling theme just needs a renderData() to redraw
 // the chart with the correct palette.
 function loadTheme() {
- return localStorage.getItem(CONFIG.THEME_STORAGE) || 'dark';
+ try { return localStorage.getItem(CONFIG.THEME_STORAGE) || 'light'; }
+ catch(e) { return 'light'; }
 }
 
 function applyTheme(theme) {
- if (theme === 'light') document.documentElement.setAttribute('data-theme', 'light');
+ if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
  else document.documentElement.removeAttribute('data-theme');
- localStorage.setItem(CONFIG.THEME_STORAGE, theme);
+ try { localStorage.setItem(CONFIG.THEME_STORAGE, theme); } catch(e) {}
  renderThemeToggle();
 }
 
@@ -3250,14 +3269,14 @@ function getChartColors() {
  const v = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
  return {
  systolic: v('--c-systolic', '#e8624a'),
- diastolic: v('--c-diastolic', '#6ab8d4'),
- bpm: v('--c-bpm', '#5db87a'),
- systolicFill: v('--c-systolic-fill', 'rgba(232,98,74,0.12)'),
- diastolicFill: v('--c-diastolic-fill', 'rgba(106,184,212,0.07)'),
- tickColor: v('--text3', '#605a54'),
- gridX: v('--chart-grid-x', 'rgba(255,255,255,0.04)'),
- gridY: v('--chart-grid-y', 'rgba(255,255,255,0.06)'),
- bg: v('--bg', '#0f0f11'),
+ diastolic: v('--c-diastolic', '#3a8aaa'),
+ bpm: v('--c-bpm', '#3a8e58'),
+ systolicFill: v('--c-systolic-fill', 'rgba(232,98,74,0.10)'),
+ diastolicFill: v('--c-diastolic-fill', 'rgba(58,138,170,0.10)'),
+ tickColor: v('--text3', '#9b948c'),
+ gridX: v('--chart-grid-x', 'rgba(0,0,0,0.05)'),
+ gridY: v('--chart-grid-y', 'rgba(0,0,0,0.07)'),
+ bg: v('--bg', '#faf7f2'),
  };
 }
 
@@ -3361,6 +3380,54 @@ function renderChart(series) {
  data: points.map(r => r.bpm || null) },
  ];
 
+ // Convert "#RRGGBB" (or "#RGB") + alpha → "rgba(r,g,b,alpha)". Used by the
+ // recommended-max-lines plugin to derive translucent versions of the series
+ // colors at draw time.
+ const hexToRgba = (hex, alpha) => {
+ let h = hex.replace('#', '').trim();
+ if (h.length === 3) h = h.split('').map(c => c + c).join('');
+ const r = parseInt(h.substr(0, 2), 16);
+ const g = parseInt(h.substr(2, 2), 16);
+ const b = parseInt(h.substr(4, 2), 16);
+ return `rgba(${r},${g},${b},${alpha})`;
+ };
+
+ // Recommended-max reference lines at the AHA "normal upper bound" — 120
+ // systolic and 80 diastolic. Drawn dashed at ~0.35 alpha so they read as
+ // reference rather than data; left-side label in the same color identifies
+ // each line. afterDatasetsDraw fires after data is rendered so the lines
+ // sit on top of the translucent fill but under nothing else.
+ const recommendedMaxLines = {
+ id: 'recommendedMaxLines',
+ afterDatasetsDraw(chart) {
+ const { ctx, chartArea, scales } = chart;
+ const yScale = scales.y;
+ if (!yScale) return;
+ const sysColor = hexToRgba(C.systolic, 0.35);
+ const diaColor = hexToRgba(C.diastolic, 0.35);
+ ctx.save();
+ ctx.lineWidth = 1;
+ ctx.setLineDash([6, 4]);
+ ctx.font = "10px 'DM Mono', monospace";
+ ctx.textBaseline = 'bottom';
+ ctx.textAlign = 'left';
+ const drawLine = (value, color, label) => {
+ const yPx = yScale.getPixelForValue(value);
+ if (yPx < chartArea.top || yPx > chartArea.bottom) return;
+ ctx.beginPath();
+ ctx.strokeStyle = color;
+ ctx.moveTo(chartArea.left, yPx);
+ ctx.lineTo(chartArea.right, yPx);
+ ctx.stroke();
+ ctx.fillStyle = color;
+ ctx.fillText(label, chartArea.left + 4, yPx - 2);
+ };
+ drawLine(120, sysColor, 'Max Sys 120');
+ drawLine(80, diaColor, 'Max Dia 80');
+ ctx.restore();
+ },
+ };
+
  chartInstance = new Chart(canvas, {
  type: 'line',
  data: { labels, datasets },
@@ -3409,6 +3476,7 @@ function renderChart(series) {
  scheduleTooltipDismiss();
  },
  },
+ plugins: [recommendedMaxLines],
  });
 
  // Populate the fixed (non-scrolling) y-axis area with HTML labels at the
@@ -3738,6 +3806,33 @@ function parseCSVLine(line) {
  out.push(cur);
  return out;
 }
+
+// Global Esc handler — dismisses transient popups and modals as if the user
+// clicked Cancel/Skip/dismiss. showConfirm() installs its own Esc handler
+// while open (resolving to false), so we short-circuit when its modal is up.
+// Order: most-likely-on-top first. Each dismissed popup returns so a single
+// Esc doesn't cascade-close multiple layers.
+document.addEventListener('keydown', (e) => {
+ if (e.key !== 'Escape') return;
+ // Confirm modal — its own handler will deal with it.
+ const confirmModal = document.getElementById('confirmModal');
+ if (confirmModal && confirmModal.classList.contains('open')) return;
+ // Tag autocomplete (transient)
+ const ac = document.getElementById('tagAutocomplete');
+ if (ac && ac.style.display === 'block') { hideTagAutocomplete(); e.preventDefault(); return; }
+ // Tag filter dropdown (transient)
+ const tfd = document.getElementById('tagFilterDropdown');
+ if (tfd && tfd.style.display === 'block') { closeTagFilter(); e.preventDefault(); return; }
+ // Note popup (uses the chart-tooltip element for both chart popup and notes)
+ const tt = document.getElementById('chartTooltip');
+ if (tt && tt.style.display === 'block') { hideTooltip(); e.preventDefault(); return; }
+ // Edit modal
+ const editModal = document.getElementById('editModal');
+ if (editModal && editModal.classList.contains('open')) { closeModal(); e.preventDefault(); return; }
+ // Onboarding modal
+ const onboardingModal = document.getElementById('onboardingModal');
+ if (onboardingModal && onboardingModal.classList.contains('open')) { skipOnboarding(); e.preventDefault(); return; }
+});
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 applyTheme(loadTheme());
