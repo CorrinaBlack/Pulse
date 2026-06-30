@@ -1,4 +1,4 @@
-<!-- Pulse v6.78 — 2026-06-29 | Chart controls redesign — replaces the always-visible selection-bar / filter-active-bar elements that used to sit between the chart and the table with a more compact right-aligned column above the chart, just below the "● Normal" status row. (1) A line-drawn info ⓘ button always present at top-right; on desktop hovering shows a small popup with the filter hint ("Tap any row to filter the graph above · Shift-click for a range"), on touch tapping toggles the popup, tap-outside / Esc dismiss. (2) When a row selection is active, a ✕ appears below the info icon; tapping clears all selections (no count text — the chart shows the filtering directly). (3) When a tag filter is active, a row with the tag chip + ✕ appears; tapping the ✕ clears the tag filter. Both filters can coexist as two stacked rows. CSS: deleted .selection-bar, .btn-clear-selections, and .filter-active-bar rules (latter kept as empty placeholder for any external references). Added .chart-controls + helpers. JS: new toggleChartHint + document click-outside listener; Esc handler from v6.70 extended to dismiss the hint popup. -->
+<!-- Pulse v6.79 — 2026-06-29 | Row-selection clear moves inline with the info icon. (1) When rows are selected, "N selected" + ✕ now sit immediately to the LEFT of the info ⓘ on the same right-aligned row, replacing the previous "below the info icon on its own row" placement. (2) The count text + ✕ rendered in var(--accent) red (matching the systolic series and the y-axis ↓ 120 marker) to draw attention to the active filtering. (3) Tag filter row unchanged — still its own row below when active. New CSS: .chart-top-row flex container, .chart-selection-inline with red color + 600 weight. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -722,6 +722,25 @@
  gap: 6px;
  margin: 10px 0 8px;
  }
+ /* Top row — info ⓘ always present at the far right; when a row selection
+ is active, the count + ✕ appear immediately to the left of it in accent
+ red to draw attention to the active filtering. */
+ .chart-top-row {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ }
+ .chart-selection-inline {
+ display: inline-flex;
+ align-items: center;
+ gap: 6px;
+ font-family: 'DM Mono', monospace;
+ font-size: 12px;
+ color: var(--accent);
+ font-weight: 600;
+ }
+ .chart-selection-inline .chart-clear-btn { color: var(--accent); }
+ .chart-selection-inline .chart-clear-btn:hover { color: var(--accent2); }
  .chart-info-wrap { position: relative; }
  .chart-info-btn,
  .chart-clear-btn {
@@ -2782,6 +2801,17 @@ function renderData() {
  ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
 
  <div class="chart-controls">
+ <div class="chart-top-row">
+ ${selectedRecordIds.size > 0 ? `
+ <div class="chart-selection-inline">
+ <span>${selectedRecordIds.size} selected</span>
+ <button class="chart-clear-btn" onclick="clearSelections()" aria-label="Clear row selections">
+ <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+ <line x1="6" y1="6" x2="18" y2="18"/>
+ <line x1="18" y1="6" x2="6" y2="18"/>
+ </svg>
+ </button>
+ </div>` : ''}
  <div class="chart-info-wrap">
  <button class="chart-info-btn" onclick="toggleChartHint(event)" aria-label="How to filter the chart">
  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2792,19 +2822,11 @@ function renderData() {
  </button>
  <div class="chart-hint-popup" id="chartHintPopup">Tap any row to filter the graph above · Shift-click for a range</div>
  </div>
+ </div>
  ${currentTagFilter ? `
  <div class="chart-control-row">
  <span class="tag-chip">${escapeHtml(currentTagFilter)}</span>
  <button class="chart-clear-btn" onclick="clearTagFilter()" aria-label="Clear tag filter">
- <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
- <line x1="6" y1="6" x2="18" y2="18"/>
- <line x1="18" y1="6" x2="6" y2="18"/>
- </svg>
- </button>
- </div>` : ''}
- ${selectedRecordIds.size > 0 ? `
- <div class="chart-control-row">
- <button class="chart-clear-btn" onclick="clearSelections()" aria-label="Clear row selections">
  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
  <line x1="6" y1="6" x2="18" y2="18"/>
  <line x1="18" y1="6" x2="6" y2="18"/>
