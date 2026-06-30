@@ -1,4 +1,4 @@
-<!-- Pulse v6.75 — 2026-06-29 | Polish on the recommended-max chart reference lines. (1) Line width bumped from 1px to 1.5px — slightly more visible without competing with the data lines. (2) Line alpha bumped from 0.35 to 0.4 — still clearly "reference" rather than "data" but reads less washed out. (3) Labels ("Max Sys 120", "Max Dia 80") now drawn at FULL series-color saturation (no alpha) so they read unambiguously as red and blue. Refactored drawLine to take separate lineColor and labelColor params. -->
+<!-- Pulse v6.76 — 2026-06-29 | Two changes to the recommended-max chart references. (1) Y-axis labels: the "120" tick is now tinted in the systolic color (red) and the "80" tick in the diastolic color (blue), matching the colors of the in-chart reference lines so a glance at the y-axis tells you what's ideal-max for each series. Implemented via inline color style on the .y-tick divs when t.value === 120 or 80; other ticks unchanged. (2) In-chart annotation text changed from "Max Sys 120" / "Max Dia 80" to "Ideal Sys ↓ 120" / "Ideal Dia ↓ 80" — friendlier wording with a real down-arrow character (U+2193) reinforcing "stay below this value". -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3425,8 +3425,8 @@ function renderChart(series) {
  ctx.fillStyle = labelColor;
  ctx.fillText(label, chartArea.left + 4, yPx - 2);
  };
- drawLine(120, sysLineColor, C.systolic, 'Max Sys 120');
- drawLine(80, diaLineColor, C.diastolic, 'Max Dia 80');
+ drawLine(120, sysLineColor, C.systolic, 'Ideal Sys ↓ 120');
+ drawLine(80, diaLineColor, C.diastolic, 'Ideal Dia ↓ 80');
  ctx.restore();
  },
  };
@@ -3491,7 +3491,12 @@ function renderChart(series) {
  const yScale = chartInstance.scales.y;
  yAxisHost.innerHTML = yScale.ticks.map(t => {
  const yPx = yScale.getPixelForValue(t.value);
- return `<div class="y-tick" style="top:${yPx}px">${t.value}</div>`;
+ // Tint the ideal-max ticks so 120 reads as red and 80 as blue, matching
+ // the in-chart "Ideal Sys ↓ 120" / "Ideal Dia ↓ 80" reference lines.
+ let colorStyle = '';
+ if (t.value === 120) colorStyle = `color:${C.systolic};`;
+ else if (t.value === 80) colorStyle = `color:${C.diastolic};`;
+ return `<div class="y-tick" style="top:${yPx}px;${colorStyle}">${t.value}</div>`;
  }).join('');
  // Trim the y-axis-fixed height to the chart-area bottom (with a small
  // buffer so the bottom half of the lowest label doesn't clip). Without
