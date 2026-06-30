@@ -1,4 +1,4 @@
-<!-- Pulse v6.74 — 2026-06-29 | Real fix for the dark-default issue. v6.73's diagnostic banner revealed the actual cause: localStorage had 'dark' explicitly stored from old auto-save behavior (every v6.45–v6.69 load called applyTheme(loadTheme()) with a 'dark' fallback and wrote the result to storage, so every existing user has 'dark' baked in even if they never deliberately toggled). v6.72's CSS-default-light fix works for genuinely fresh users; v6.74 adds a one-time migration so existing users get the new default too. Boot script now checks for a 'pulse_theme_migrated_v674' marker; if absent, it removes the auto-saved theme value and sets the marker. Subsequent loads skip the migration and honor whatever theme the user has chosen since. Anyone who genuinely prefers dark just toggles once and it persists normally. v6.73's pink diagnostic banner removed. -->
+<!-- Pulse v6.75 — 2026-06-29 | Polish on the recommended-max chart reference lines. (1) Line width bumped from 1px to 1.5px — slightly more visible without competing with the data lines. (2) Line alpha bumped from 0.35 to 0.4 — still clearly "reference" rather than "data" but reads less washed out. (3) Labels ("Max Sys 120", "Max Dia 80") now drawn at FULL series-color saturation (no alpha) so they read unambiguously as red and blue. Refactored drawLine to take separate lineColor and labelColor params. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3403,27 +3403,30 @@ function renderChart(series) {
  const { ctx, chartArea, scales } = chart;
  const yScale = scales.y;
  if (!yScale) return;
- const sysColor = hexToRgba(C.systolic, 0.35);
- const diaColor = hexToRgba(C.diastolic, 0.35);
+ // Lines kept translucent so they read as reference, not data; labels use
+ // full-saturation series color so "Max Sys 120" reads clearly as red and
+ // "Max Dia 80" clearly as blue.
+ const sysLineColor = hexToRgba(C.systolic, 0.4);
+ const diaLineColor = hexToRgba(C.diastolic, 0.4);
  ctx.save();
- ctx.lineWidth = 1;
+ ctx.lineWidth = 1.5;
  ctx.setLineDash([6, 4]);
  ctx.font = "10px 'DM Mono', monospace";
  ctx.textBaseline = 'bottom';
  ctx.textAlign = 'left';
- const drawLine = (value, color, label) => {
+ const drawLine = (value, lineColor, labelColor, label) => {
  const yPx = yScale.getPixelForValue(value);
  if (yPx < chartArea.top || yPx > chartArea.bottom) return;
  ctx.beginPath();
- ctx.strokeStyle = color;
+ ctx.strokeStyle = lineColor;
  ctx.moveTo(chartArea.left, yPx);
  ctx.lineTo(chartArea.right, yPx);
  ctx.stroke();
- ctx.fillStyle = color;
+ ctx.fillStyle = labelColor;
  ctx.fillText(label, chartArea.left + 4, yPx - 2);
  };
- drawLine(120, sysColor, 'Max Sys 120');
- drawLine(80, diaColor, 'Max Dia 80');
+ drawLine(120, sysLineColor, C.systolic, 'Max Sys 120');
+ drawLine(80, diaLineColor, C.diastolic, 'Max Dia 80');
  ctx.restore();
  },
  };
