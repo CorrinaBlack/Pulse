@@ -1,4 +1,4 @@
-<!-- Pulse v6.82 — see CHANGELOG at end of file -->
+<!-- Pulse v6.83 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -722,9 +722,10 @@
  gap: 6px;
  margin: 10px 0 8px;
  }
- /* Top row — info ⓘ always present at the far right; when a row selection
- is active, the count + ✕ appear immediately to the left of it in accent
- red to draw attention to the active filtering. */
+ /* Top row — info ⓘ always present at the far right; filter indicators
+ (row-selection count + ✕, tag chip + ✕) stack inline to its LEFT in the
+ order they're added. Both ✕ clear an active filter so both render in
+ accent red; the info ⓘ stays muted until hover. */
  .chart-top-row {
  display: flex;
  align-items: center;
@@ -739,14 +740,16 @@
  color: var(--accent);
  font-weight: 600;
  }
- .chart-selection-inline .chart-clear-btn { color: var(--accent); }
- .chart-selection-inline .chart-clear-btn:hover { color: var(--accent2); }
+ .chart-tag-inline {
+ display: inline-flex;
+ align-items: center;
+ gap: 6px;
+ }
  .chart-info-wrap { position: relative; }
  .chart-info-btn,
  .chart-clear-btn {
  background: transparent;
  border: none;
- color: var(--text3);
  cursor: pointer;
  padding: 4px;
  border-radius: 4px;
@@ -755,16 +758,10 @@
  justify-content: center;
  transition: color var(--transition);
  }
- .chart-info-btn:hover,
- .chart-clear-btn:hover { color: var(--accent); }
- .chart-control-row {
- display: flex;
- align-items: center;
- gap: 8px;
- font-family: 'DM Mono', monospace;
- font-size: 12px;
- color: var(--text2);
- }
+ .chart-info-btn { color: var(--text3); }
+ .chart-info-btn:hover { color: var(--accent); }
+ .chart-clear-btn { color: var(--accent); }
+ .chart-clear-btn:hover { color: var(--accent2); }
  .chart-hint-popup {
  display: none;
  position: absolute;
@@ -2837,7 +2834,8 @@ function buildStatsRowHtml(stats) {
 }
 
 /** Right-aligned column above the chart: info ⓘ (always), inline selection
- * count + ✕ (when rows selected), and tag-filter chip + ✕ (when filtering). */
+ * count + ✕ (when rows selected), and tag chip + ✕ (when filtering). All
+ * three sit on the same row: selection → tag → info, left to right. */
 function buildChartControlsHtml(selectionCount, tagFilter) {
  return `
  <div class="chart-controls">
@@ -2847,16 +2845,16 @@ function buildChartControlsHtml(selectionCount, tagFilter) {
  <span>${selectionCount} selected</span>
  <button class="chart-clear-btn" onclick="clearSelections()" aria-label="Clear row selections">${_xSvg}</button>
  </div>` : ''}
+ ${tagFilter ? `
+ <div class="chart-tag-inline">
+ <span class="tag-chip">${escapeHtml(tagFilter)}</span>
+ <button class="chart-clear-btn" onclick="clearTagFilter()" aria-label="Clear tag filter">${_xSvg}</button>
+ </div>` : ''}
  <div class="chart-info-wrap">
  <button class="chart-info-btn" onclick="toggleChartHint(event)" aria-label="How to filter the chart">${_infoSvg}</button>
  <div class="chart-hint-popup" id="chartHintPopup">Tap any row to filter the graph above · Shift-click for a range</div>
  </div>
  </div>
- ${tagFilter ? `
- <div class="chart-control-row">
- <span class="tag-chip">${escapeHtml(tagFilter)}</span>
- <button class="chart-clear-btn" onclick="clearTagFilter()" aria-label="Clear tag filter">${_xSvg}</button>
- </div>` : ''}
  </div>`;
 }
 
@@ -3983,6 +3981,22 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.83 — 2026-06-29 — Tag-filter chip moves inline with the rest of the chart
+ controls. Three changes:
+ • Tag chip + ✕ now sit on the same row as the row-selection inline and
+ the info ⓘ button. Order left → right: [N selected ✕] [@tag ✕] [ⓘ].
+ Previously the tag-filter row lived in its own .chart-control-row
+ below the top row; that class is now removed.
+ • Both ✕ buttons rendered in var(--accent) red — they both clear an
+ active filter so the visual treatment is unified. Hover goes to
+ var(--accent2). Dropped the .chart-selection-inline-specific override
+ since the base .chart-clear-btn rule is now red by default.
+ • Info ⓘ button kept muted (var(--text3)) until hover so it doesn't
+ compete with the active-filter indicators for attention.
+ New .chart-tag-inline CSS class mirrors .chart-selection-inline shape
+ (inline-flex, gap 6px, align-items center) without the DM Mono / red
+ typographic treatment — the .tag-chip span carries its own styling.
 
 v6.82 — 2026-06-29 — Bugfix for three regressions introduced by v6.81's DOM
  caching. Symptoms: theme toggle button empty (no icon/label) in the
