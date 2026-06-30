@@ -1,4 +1,4 @@
-<!-- Pulse v6.80 — see CHANGELOG at end of file -->
+<!-- Pulse v6.82 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1541,6 +1541,27 @@ const store = {
  del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
+// Cached DOM nodes for elements that exist for the app's lifetime. Populated
+// at INIT by cacheDOM() so hot paths (popup show/hide, modal open/close, Esc
+// handlers) don't pay for repeated getElementById lookups. Dynamically-added
+// elements (#yAxisFixed, #tableBody, #chartHintPopup) are NOT cached because
+// they're rebuilt on each renderData() innerHTML replacement.
+const dom = {};
+function cacheDOM() {
+ dom.chartTooltip = document.getElementById('chartTooltip');
+ dom.tagAutocomplete = document.getElementById('tagAutocomplete');
+ dom.tagFilterDropdown = document.getElementById('tagFilterDropdown');
+ dom.editModal = document.getElementById('editModal');
+ dom.confirmModal = document.getElementById('confirmModal');
+ dom.onboardModal = document.getElementById('onboardModal');
+ // Close edit modal on overlay click (target is the modal backdrop itself,
+ // not any child). Lives here so the listener attaches after the reference
+ // is captured; previously it was a top-level statement that ran before
+ // cacheDOM() at INIT, throwing TypeError on undefined and halting the
+ // entire INIT block (theme toggle, accordion default-open, photo-tab gating).
+ dom.editModal.addEventListener('click', e => { if (e.target === dom.editModal) closeModal(); });
+}
+
 function loadData() {
  const raw = store.get(STORAGE_KEY);
  if (!raw) return [];
@@ -2704,14 +2725,14 @@ function checkOnboarding() {
  store.set(CONFIG.ONBOARD_STORAGE, 'true');
  return;
  }
- document.getElementById('onboardModal').classList.add('open');
+ dom.onboardModal.classList.add('open');
  setTimeout(() => { const i = document.getElementById('onboardApiKey'); if (i) i.focus(); }, 80);
 }
 
 function skipOnboarding() {
  store.set(CONFIG.ONBOARD_STORAGE, 'true');
  document.getElementById('onboardApiKey').value = '';
- document.getElementById('onboardModal').classList.remove('open');
+ dom.onboardModal.classList.remove('open');
  updatePhotoEntryVisibility();
 }
 
@@ -2727,7 +2748,7 @@ function completeOnboarding() {
  }
  store.set(CONFIG.ONBOARD_STORAGE, 'true');
  document.getElementById('onboardApiKey').value = '';
- document.getElementById('onboardModal').classList.remove('open');
+ dom.onboardModal.classList.remove('open');
  updateApiKeyBtn();
  updatePhotoEntryVisibility();
 }
@@ -2772,35 +2793,29 @@ function updateCameraButtonVisibility() {
 }
 
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
-function renderData() {
- setEntryAccordion();
- const section = document.getElementById('dataSection');
- if (records.length === 0) {
- section.innerHTML = '<div class="no-data-msg">No measurements yet — add your first reading above.</div>';
- return;
- }
+// renderData orchestrates: filter records → narrow to chartData → build the
+// section HTML from pure helpers → defer chart + table rendering. The pure
+// helpers below take just the data they need and return strings, no DOM
+// access. That makes each piece independently inspectable and means renderData
+// itself stays at ~20 lines.
 
- let filtered = records;
- if (currentTagFilter) {
- const filterLower = currentTagFilter.toLowerCase();
- filtered = filtered.filter(r => extractTags(r.notes).some(t => t.toLowerCase() === filterLower));
- }
-
- // chartData = what the chart actually plots. Stats below are computed
- // from the same set so they always reflect what the user is seeing.
- // Tag filter narrows `filtered`; row selection further narrows that into
- // `chartData`. When nothing is selected, chartData === filtered.
- const chartData = selectedRecordIds.size > 0
- ? filtered.filter(r => selectedRecordIds.has(r.id))
- : filtered;
-
- const avgSys = chartData.length ? Math.round(chartData.reduce((s,r) => s+r.sys, 0) / chartData.length) : '--';
- const avgDia = chartData.length ? Math.round(chartData.reduce((s,r) => s+r.dia, 0) / chartData.length) : '--';
- const bpmR = chartData.filter(r => r.bpm);
+/** Reduce `rows` to {avgSys, avgDia, avgBpm, cat}. Returns averages as numbers
+ * or the string '--' when there's nothing to average. `cat` is the BP category
+ * for the averages, or null when not computable. */
+function computeStats(rows) {
+ const avgSys = rows.length ? Math.round(rows.reduce((s,r) => s+r.sys, 0) / rows.length) : '--';
+ const avgDia = rows.length ? Math.round(rows.reduce((s,r) => s+r.dia, 0) / rows.length) : '--';
+ const bpmR = rows.filter(r => r.bpm);
  const avgBpm = bpmR.length ? Math.round(bpmR.reduce((s,r) => s+r.bpm, 0) / bpmR.length) : '--';
  const cat = (typeof avgSys === 'number') ? bpCategory(avgSys, avgDia) : null;
+ return { avgSys, avgDia, avgBpm, cat };
+}
 
- section.innerHTML = `
+/** The three stat cards + optional "● Normal" category row. Pure: same inputs
+ * → same output. */
+function buildStatsRowHtml(stats) {
+ const { avgSys, avgDia, avgBpm, cat } = stats;
+ return `
  <div class="stats-row">
  <div class="stat-card">
  <div class="stat-label">Avg Systolic</div>
@@ -2818,13 +2833,18 @@ function renderData() {
  ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
  </div>
- ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}
+ ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}`;
+}
 
+/** Right-aligned column above the chart: info ⓘ (always), inline selection
+ * count + ✕ (when rows selected), and tag-filter chip + ✕ (when filtering). */
+function buildChartControlsHtml(selectionCount, tagFilter) {
+ return `
  <div class="chart-controls">
  <div class="chart-top-row">
- ${selectedRecordIds.size > 0 ? `
+ ${selectionCount > 0 ? `
  <div class="chart-selection-inline">
- <span>${selectedRecordIds.size} selected</span>
+ <span>${selectionCount} selected</span>
  <button class="chart-clear-btn" onclick="clearSelections()" aria-label="Clear row selections">${_xSvg}</button>
  </div>` : ''}
  <div class="chart-info-wrap">
@@ -2832,13 +2852,19 @@ function renderData() {
  <div class="chart-hint-popup" id="chartHintPopup">Tap any row to filter the graph above · Shift-click for a range</div>
  </div>
  </div>
- ${currentTagFilter ? `
+ ${tagFilter ? `
  <div class="chart-control-row">
- <span class="tag-chip">${escapeHtml(currentTagFilter)}</span>
+ <span class="tag-chip">${escapeHtml(tagFilter)}</span>
  <button class="chart-clear-btn" onclick="clearTagFilter()" aria-label="Clear tag filter">${_xSvg}</button>
  </div>` : ''}
- </div>
+ </div>`;
+}
 
+/** Static chart-section + table shell. Doesn't take any data because the
+ * chart and table bodies are populated later by renderChart / renderTable
+ * into the canvas / tbody nodes this provides. */
+function buildChartAndTableShellHtml(tagFilter) {
+ return `
  <div class="chart-section">
  <div class="chart-yaxis-fixed" id="yAxisFixed"></div>
  <div class="chart-wrap">
@@ -2859,18 +2885,43 @@ function renderData() {
  <th class="sortable" onclick="setSort('dia')">Diastolic ${sortArrow('dia')}</th>
  <th class="sortable" onclick="setSort('bpm')">BPM ${sortArrow('bpm')}</th>
  <th class="sortable" onclick="setSort('device')">Device ${sortArrow('device')}</th>
- <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}<button class="tag-filter-btn ${currentTagFilter ? 'active' : ''}" onclick="event.stopPropagation(); openTagFilter(event)" title="Filter by tag" aria-label="Filter by tag">${_funnelSvg}</button></th>
+ <th class="sortable" onclick="setSort('notes')">Notes ${sortArrow('notes')}<button class="tag-filter-btn ${tagFilter ? 'active' : ''}" onclick="event.stopPropagation(); openTagFilter(event)" title="Filter by tag" aria-label="Filter by tag">${_funnelSvg}</button></th>
  <th class="sortable" onclick="setSort('category')">Category ${sortArrow('category')}</th>
  <th></th>
  </tr>
  </thead>
  <tbody id="tableBody"></tbody>
  </table>
- </div>
- `;
+ </div>`;
+}
 
- // chartData was computed above (alongside the stats) so the stat cards
- // and the chart both stay in lockstep with the same data set.
+function renderData() {
+ setEntryAccordion();
+ const section = document.getElementById('dataSection');
+ if (records.length === 0) {
+ section.innerHTML = '<div class="no-data-msg">No measurements yet — add your first reading above.</div>';
+ return;
+ }
+
+ // Apply tag filter, then row selection. chartData (stats + chart) follows
+ // the most narrow set; the table itself shows the tag-filtered set so the
+ // user can still see/manage individual rows even with selections active.
+ const filtered = currentTagFilter
+ ? records.filter(r => {
+ const fl = currentTagFilter.toLowerCase();
+ return extractTags(r.notes).some(t => t.toLowerCase() === fl);
+ })
+ : records;
+ const chartData = selectedRecordIds.size > 0
+ ? filtered.filter(r => selectedRecordIds.has(r.id))
+ : filtered;
+
+ const stats = computeStats(chartData);
+ section.innerHTML =
+ buildStatsRowHtml(stats) +
+ buildChartControlsHtml(selectedRecordIds.size, currentTagFilter) +
+ buildChartAndTableShellHtml(currentTagFilter);
+
  renderChart(chartData);
  renderTable(filtered);
 }
@@ -3006,11 +3057,11 @@ const autocompleteState = {
 };
 
 function isAutocompleteVisible() {
- return document.getElementById('tagAutocomplete').classList.contains('shown');
+ return dom.tagAutocomplete.classList.contains('shown');
 }
 
 function hideTagAutocomplete() {
- const ac = document.getElementById('tagAutocomplete');
+ const ac = dom.tagAutocomplete;
  ac.classList.remove('shown');
  autocompleteState.input = null;
  autocompleteState.atIdx = -1;
@@ -3020,7 +3071,7 @@ function hideTagAutocomplete() {
 }
 
 function showTagAutocomplete(input) {
- const ac = document.getElementById('tagAutocomplete');
+ const ac = dom.tagAutocomplete;
  // Build merged candidate list: SEED_TAGS + any custom tags already in use
  const used = getAvailableTagsWithCounts().map(t => t.display);
  const seedLower = new Set(SEED_TAGS.map(t => t.toLowerCase()));
@@ -3127,7 +3178,7 @@ function insertSelectedTag() {
 // hides the dropdown). Walks the click target up to the .ta-item to allow
 // clicks on either the row itself or anything inside it.
 document.addEventListener('mousedown', e => {
- const ac = document.getElementById('tagAutocomplete');
+ const ac = dom.tagAutocomplete;
  if (!ac || !ac.classList.contains('shown')) return;
  const item = e.target.closest('.ta-item');
  if (item && ac.contains(item)) {
@@ -3166,7 +3217,7 @@ document.addEventListener('keydown', e => {
 // ─── TAG FILTER DROPDOWN ──────────────────────────────────────────────────────
 function openTagFilter(event) {
  const btn = event.currentTarget;
- const dd = document.getElementById('tagFilterDropdown');
+ const dd = dom.tagFilterDropdown;
  const tags = getAvailableTagsWithCounts();
  const activeLower = (currentTagFilter || '').toLowerCase();
  const itemsHtml = tags.length === 0
@@ -3199,7 +3250,7 @@ function openTagFilter(event) {
 }
 
 function closeTagFilter() {
- document.getElementById('tagFilterDropdown').classList.remove('shown');
+ dom.tagFilterDropdown.classList.remove('shown');
 }
 
 function setTagFilter(tag) {
@@ -3218,7 +3269,7 @@ function clearTagFilter() {
 
 // Click on a tag filter dropdown item (delegated) — and click-outside to close.
 document.addEventListener('click', e => {
- const dd = document.getElementById('tagFilterDropdown');
+ const dd = dom.tagFilterDropdown;
  if (!dd || !dd.classList.contains('shown')) return;
  const item = e.target.closest('.tfd-item');
  if (item && dd.contains(item)) {
@@ -3301,7 +3352,7 @@ function showNotePopup(event, recordId) {
  event.stopPropagation();
  const r = records.find(x => x.id === recordId);
  if (!r) return;
- const tooltip = document.getElementById('chartTooltip');
+ const tooltip = dom.chartTooltip;
  tooltip.innerHTML = `
  <div class="tt-meta" style="margin-bottom:6px">Note</div>
  <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;max-width:320px">${renderNotesHtml(r.notes||'')}</div>
@@ -3338,132 +3389,33 @@ function getChartColors() {
  };
 }
 
-function renderChart(series) {
- if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
- const canvas = document.getElementById('bpChart');
- if (!canvas || series.length === 0) return;
+// ─── CHART HELPERS ────────────────────────────────────────────────────────────
+// Pieces of renderChart broken out so each concern is testable on its own and
+// renderChart itself stays a thin orchestrator. None of these helpers access
+// chartInstance directly — they take their inputs and return data or DOM
+// updates the orchestrator wires together.
 
- const C = getChartColors();
- const datasetDefaults = {
- systolic: {
- label: 'Systolic',
- borderColor: C.systolic,
- backgroundColor: C.systolicFill,
- pointRadius: 5,
- pointHoverRadius: 8,
- pointBackgroundColor: C.bg,
- pointBorderColor: C.systolic,
- pointBorderWidth: 1,
- pointHoverBackgroundColor: C.bg,
- pointHoverBorderColor: C.systolic,
- pointHoverBorderWidth: 1,
- tension: 0.35,
- fill: true,
- borderDash: [16, 6, 16, 6, 2, 6],
- borderCapStyle: 'round',
- },
- diastolic: {
- label: 'Diastolic',
- borderColor: C.diastolic,
- backgroundColor: C.diastolicFill,
- pointBackgroundColor: C.diastolic,
- pointRadius: 4,
- pointHoverRadius: 7,
- tension: 0.35,
- fill: false,
- },
- bpm: {
- label: 'BPM',
- borderColor: C.bpm,
- backgroundColor: 'transparent',
- pointBackgroundColor: C.bpm,
- pointRadius: 3,
- pointHoverRadius: 6,
- tension: 0.35,
- borderDash: [4, 4],
- borderCapStyle: 'round',
- spanGaps: true,
- },
- };
- const scales = {
- x: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: C.gridX } },
- // Hide y-axis labels and force its allocated layout width to 0 so the chart
- // area extends to the canvas left edge — which sits flush against the
- // .chart-yaxis-fixed div (where the HTML labels live). Without afterFit,
- // Chart.js still reserves ~30px on the left even with ticks/border hidden,
- // creating a visible gap between the y-axis labels and the grid lines.
- y: {
- ticks: { display: false },
- border: { display: false },
- grid: { color: C.gridY },
- min: 40,
- afterFit(scale) { scale.width = 0; },
- },
- };
-
- // Sort by chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
- // puts oldest leftmost. This mirrors the table's Date & Time column sort —
- // see setSort() and the chartTimeDirection state variable.
- const points = [...series].sort((a, b) => chartTimeDirection === 'desc'
- ? new Date(b.dt) - new Date(a.dt)
- : new Date(a.dt) - new Date(b.dt));
-
- const wrap = canvas.parentElement.parentElement;
- const minWidth = Math.max(wrap.clientWidth, points.length * 50);
- canvas.parentElement.style.width = minWidth + 'px';
- canvas.style.width = minWidth + 'px';
- canvas.width = minWidth;
-
- // Build x-axis labels in MM-DD-YY format (e.g. 06-05-26). Show each date
- // only on the leftmost (first-encountered) reading of that day; subsequent
- // readings on the same date get an empty label to keep the axis uncluttered.
- let lastDateStr = null;
- const labels = points.map(r => {
- const d = new Date(r.dt);
- const month2 = String(d.getMonth() + 1).padStart(2, '0');
- const day2 = String(d.getDate()).padStart(2, '0');
- const year2 = String(d.getFullYear()).slice(-2);
- const dateStr = month2 + '-' + day2 + '-' + year2;
- if (dateStr === lastDateStr) return '';
- lastDateStr = dateStr;
- return dateStr;
- });
-
- const datasets = [
- { ...datasetDefaults.systolic,
- data: points.map(r => r.sys) },
- { ...datasetDefaults.diastolic,
- data: points.map(r => r.dia) },
- { ...datasetDefaults.bpm,
- data: points.map(r => r.bpm || null) },
- ];
-
- // Convert "#RRGGBB" (or "#RGB") + alpha → "rgba(r,g,b,alpha)". Used by the
- // recommended-max-lines plugin to derive translucent versions of the series
- // colors at draw time.
- const hexToRgba = (hex, alpha) => {
+/** "#RRGGBB" or "#RGB" + alpha → "rgba(r,g,b,alpha)". */
+function hexToRgba(hex, alpha) {
  let h = hex.replace('#', '').trim();
  if (h.length === 3) h = h.split('').map(c => c + c).join('');
  const r = parseInt(h.substr(0, 2), 16);
  const g = parseInt(h.substr(2, 2), 16);
  const b = parseInt(h.substr(4, 2), 16);
  return `rgba(${r},${g},${b},${alpha})`;
- };
+}
 
- // Recommended-max reference lines at the AHA "normal upper bound" — 120
- // systolic and 80 diastolic. Drawn dashed at ~0.35 alpha so they read as
- // reference rather than data; left-side label in the same color identifies
- // each line. afterDatasetsDraw fires after data is rendered so the lines
- // sit on top of the translucent fill but under nothing else.
- const recommendedMaxLines = {
+/** Chart.js plugin: dashed horizontal reference lines at 120 (sys) and 80 (dia),
+ * both at ~0.4 alpha so they read as reference rather than data. Factored so
+ * each render gets a fresh closure over `C` (theme switches change the
+ * resolved colors). The labels themselves are on the y-axis (HTML), not here. */
+function recommendedMaxLinesPlugin(C) {
+ return {
  id: 'recommendedMaxLines',
  afterDatasetsDraw(chart) {
  const { ctx, chartArea, scales } = chart;
  const yScale = scales.y;
  if (!yScale) return;
- // Lines kept translucent so they read as reference, not data. The y-axis
- // tick labels (rendered separately in HTML below) identify which line is
- // which via color and a ↓ prefix, so no in-canvas text is needed here.
  const sysLineColor = hexToRgba(C.systolic, 0.4);
  const diaLineColor = hexToRgba(C.diastolic, 0.4);
  ctx.save();
@@ -3483,29 +3435,94 @@ function renderChart(series) {
  ctx.restore();
  },
  };
+}
 
- chartInstance = new Chart(canvas, {
- type: 'line',
- data: { labels, datasets },
- options: {
- responsive: false,
- animation: false,
- interaction: { mode: 'index', intersect: false },
- plugins: { legend: { display: false }, tooltip: { enabled: false } },
- scales,
- onClick(evt) {
- // intersect:true → only register clicks that land ON a dot. Misses
- // bubble to the document, where the managed dismiss-handler closes
- // any open tooltip.
- const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
- if (!pts.length) return;
- // Stop the click from bubbling so the previous popup's dismiss-handler
- // doesn't fire on the same click that's opening a new popup.
- if (evt.native && evt.native.stopPropagation) evt.native.stopPropagation();
- const idx = pts[0].index;
- const r = points[idx];
+/** The three Chart.js dataset configurations for systolic / diastolic / BPM
+ * series, given the sorted points and the resolved theme color cache. */
+function buildChartDatasets(points, C) {
+ return [
+ {
+ label: 'Systolic',
+ data: points.map(r => r.sys),
+ borderColor: C.systolic,
+ backgroundColor: C.systolicFill,
+ pointRadius: 5,
+ pointHoverRadius: 8,
+ pointBackgroundColor: C.bg,
+ pointBorderColor: C.systolic,
+ pointBorderWidth: 1,
+ pointHoverBackgroundColor: C.bg,
+ pointHoverBorderColor: C.systolic,
+ pointHoverBorderWidth: 1,
+ tension: 0.35,
+ fill: true,
+ borderDash: [16, 6, 16, 6, 2, 6],
+ borderCapStyle: 'round',
+ },
+ {
+ label: 'Diastolic',
+ data: points.map(r => r.dia),
+ borderColor: C.diastolic,
+ backgroundColor: C.diastolicFill,
+ pointBackgroundColor: C.diastolic,
+ pointRadius: 4,
+ pointHoverRadius: 7,
+ tension: 0.35,
+ fill: false,
+ },
+ {
+ label: 'BPM',
+ data: points.map(r => r.bpm || null),
+ borderColor: C.bpm,
+ backgroundColor: 'transparent',
+ pointBackgroundColor: C.bpm,
+ pointRadius: 3,
+ pointHoverRadius: 6,
+ tension: 0.35,
+ borderDash: [4, 4],
+ borderCapStyle: 'round',
+ spanGaps: true,
+ },
+ ];
+}
+
+/** X-axis labels in MM-DD-YY format. Each date appears only on the first
+ * (leftmost-encountered) point of that day; later points on the same day get
+ * an empty string to keep the axis uncluttered. */
+function buildXAxisLabels(points) {
+ let lastDateStr = null;
+ return points.map(r => {
+ const d = new Date(r.dt);
+ const month2 = String(d.getMonth() + 1).padStart(2, '0');
+ const day2 = String(d.getDate()).padStart(2, '0');
+ const year2 = String(d.getFullYear()).slice(-2);
+ const dateStr = month2 + '-' + day2 + '-' + year2;
+ if (dateStr === lastDateStr) return '';
+ lastDateStr = dateStr;
+ return dateStr;
+ });
+}
+
+/** x/y scale configuration. Y-axis ticks/border hidden + afterFit width=0
+ * because the actual y-labels live in the separate fixed div on the left. */
+function buildChartScales(C) {
+ return {
+ x: { ticks: { color: C.tickColor, font: { family: 'DM Mono', size: 10 }, maxRotation: 0 }, grid: { color: C.gridX } },
+ y: {
+ ticks: { display: false },
+ border: { display: false },
+ grid: { color: C.gridY },
+ min: 40,
+ afterFit(scale) { scale.width = 0; },
+ },
+ };
+}
+
+/** Populate the chart point tooltip (#chartTooltip) for a clicked data point,
+ * position it near the click, and schedule its next-click dismissal. */
+function showChartPointPopup(r, evt) {
  const cat = bpCategory(r.sys, r.dia);
- const tooltip = document.getElementById('chartTooltip');
+ const tooltip = dom.chartTooltip;
  const dt = new Date(r.dt);
  tooltip.innerHTML = `
  <div class="tt-bp-row">
@@ -3530,35 +3547,75 @@ function renderChart(series) {
  tooltip.style.left = x + 'px';
  tooltip.style.top = y + 'px';
  scheduleTooltipDismiss();
- },
- },
- plugins: [recommendedMaxLines],
- });
+}
 
- // Populate the fixed (non-scrolling) y-axis area with HTML labels at the
- // same pixel positions Chart.js would draw them. The chart's own y-axis
- // ticks/labels are hidden (scales.y.ticks.display = false) but grid lines
- // are kept, so these labels visually pair with the in-canvas grid.
- const yAxisHost = document.getElementById('yAxisFixed');
- if (yAxisHost) {
- const yScale = chartInstance.scales.y;
- yAxisHost.innerHTML = yScale.ticks.map(t => {
+/** Populate the fixed (non-scrolling) y-axis area with HTML labels at the
+ * pixel positions Chart.js would draw them. The 120 and 80 ticks get a colored
+ * ↓ prefix in their respective series colors, marking the recommended-max
+ * lines drawn separately in the chart canvas. */
+function populateYAxisLabels(yScale, C) {
+ const host = document.getElementById('yAxisFixed');
+ if (!host) return;
+ host.innerHTML = yScale.ticks.map(t => {
  const yPx = yScale.getPixelForValue(t.value);
- // Tint the ideal-max ticks so 120 reads as red and 80 as blue, with a
- // small down arrow prefix in the same color reinforcing "stay below".
- // Pairs with the (label-less) dashed reference lines in the chart canvas.
  let colorStyle = '';
  let prefix = '';
  if (t.value === 120) { colorStyle = `color:${C.systolic};`; prefix = '↓ '; }
  else if (t.value === 80) { colorStyle = `color:${C.diastolic};`; prefix = '↓ '; }
  return `<div class="y-tick" style="top:${yPx}px;${colorStyle}">${prefix}${t.value}</div>`;
  }).join('');
- // Trim the y-axis-fixed height to the chart-area bottom (with a small
- // buffer so the bottom half of the lowest label doesn't clip). Without
- // this it would run the full 200px canvas height and visibly extend
- // below the chart's "40" tick into the x-axis label zone.
- yAxisHost.style.height = (yScale.bottom + 8) + 'px';
- }
+ // Trim the fixed-y-axis height to the chart-area bottom (with a small buffer)
+ // so it doesn't run the full 200px canvas height into the x-axis label zone.
+ host.style.height = (yScale.bottom + 8) + 'px';
+}
+
+function renderChart(series) {
+ if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+ const canvas = document.getElementById('bpChart');
+ if (!canvas || series.length === 0) return;
+
+ const C = getChartColors();
+
+ // Sort by chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
+ // puts oldest leftmost. Mirrors the table's Date & Time column sort — see
+ // setSort() and the chartTimeDirection state variable.
+ const points = [...series].sort((a, b) => chartTimeDirection === 'desc'
+ ? new Date(b.dt) - new Date(a.dt)
+ : new Date(a.dt) - new Date(b.dt));
+
+ // Size the canvas to its scroll container or to ~50px per point, whichever
+ // is larger. Lets the chart scroll horizontally when there are many points.
+ const wrap = canvas.parentElement.parentElement;
+ const minWidth = Math.max(wrap.clientWidth, points.length * 50);
+ canvas.parentElement.style.width = minWidth + 'px';
+ canvas.style.width = minWidth + 'px';
+ canvas.width = minWidth;
+
+ chartInstance = new Chart(canvas, {
+ type: 'line',
+ data: { labels: buildXAxisLabels(points), datasets: buildChartDatasets(points, C) },
+ options: {
+ responsive: false,
+ animation: false,
+ interaction: { mode: 'index', intersect: false },
+ plugins: { legend: { display: false }, tooltip: { enabled: false } },
+ scales: buildChartScales(C),
+ onClick(evt) {
+ // intersect:true → only register clicks that land ON a dot. Misses
+ // bubble to the document, where the managed dismiss-handler closes
+ // any open tooltip.
+ const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+ if (!pts.length) return;
+ // Stop the click from bubbling so the previous popup's dismiss-handler
+ // doesn't fire on the same click that's opening a new popup.
+ if (evt.native && evt.native.stopPropagation) evt.native.stopPropagation();
+ showChartPointPopup(points[pts[0].index], evt);
+ },
+ },
+ plugins: [recommendedMaxLinesPlugin(C)],
+ });
+
+ populateYAxisLabels(chartInstance.scales.y, C);
 }
 
 // Single managed dismiss-on-next-click handler shared by the chart popup and
@@ -3579,7 +3636,7 @@ function scheduleTooltipDismiss() {
 }
 
 function hideTooltip() {
- const el = document.getElementById('chartTooltip');
+ const el = dom.chartTooltip;
  if (el) el.style.display = 'none';
  if (_dismissTooltipHandler) {
  document.removeEventListener('click', _dismissTooltipHandler);
@@ -3600,12 +3657,12 @@ function openEdit(id) {
  document.getElementById('e-d').value = parts.d;
  document.getElementById('e-t').value = parts.t;
  document.getElementById('e-notes').value = r.notes || '';
- document.getElementById('editModal').classList.add('open');
+ dom.editModal.classList.add('open');
 }
 
 function closeModal() {
  editingId = null;
- document.getElementById('editModal').classList.remove('open');
+ dom.editModal.classList.remove('open');
 }
 
 function saveEdit() {
@@ -3646,7 +3703,7 @@ async function deleteRecord(id) {
 // Backdrop click and Esc key both resolve to false (cancel).
 function showConfirm({ title = 'Confirm', message = '', confirmLabel = 'Confirm' } = {}) {
  return new Promise(resolve => {
- const modal = document.getElementById('confirmModal');
+ const modal = dom.confirmModal;
  const okBtn = document.getElementById('confirmOkBtn');
  const cancelBtn = document.getElementById('confirmCancelBtn');
  document.getElementById('confirmTitle').textContent = title;
@@ -3689,11 +3746,6 @@ function renderDataPreserveScroll() {
  const newWrap = document.querySelector('.data-table-wrap');
  if (newWrap) newWrap.scrollTop = scrollTop;
 }
-
-// Close modal on overlay click
-document.getElementById('editModal').addEventListener('click', function(e) {
- if (e.target === this) closeModal();
-});
 
 // ─── EXPORT CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
@@ -3893,22 +3945,22 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
  if (e.key !== 'Escape') return;
  // Confirm modal — its own handler will deal with it.
- const confirmModal = document.getElementById('confirmModal');
+ const confirmModal = dom.confirmModal;
  if (confirmModal && confirmModal.classList.contains('open')) return;
  // Chart hint popup (transient, tap-toggled)
  const hint = document.getElementById('chartHintPopup');
  if (hint && hint.classList.contains('shown')) { hint.classList.remove('shown'); e.preventDefault(); return; }
  // Tag autocomplete (transient)
- const ac = document.getElementById('tagAutocomplete');
+ const ac = dom.tagAutocomplete;
  if (ac && ac.classList.contains('shown')) { hideTagAutocomplete(); e.preventDefault(); return; }
  // Tag filter dropdown (transient)
- const tfd = document.getElementById('tagFilterDropdown');
+ const tfd = dom.tagFilterDropdown;
  if (tfd && tfd.classList.contains('shown')) { closeTagFilter(); e.preventDefault(); return; }
  // Note popup (uses the chart-tooltip element for both chart popup and notes)
- const tt = document.getElementById('chartTooltip');
+ const tt = dom.chartTooltip;
  if (tt && tt.style.display === 'block') { hideTooltip(); e.preventDefault(); return; }
  // Edit modal
- const editModal = document.getElementById('editModal');
+ const editModal = dom.editModal;
  if (editModal && editModal.classList.contains('open')) { closeModal(); e.preventDefault(); return; }
  // Onboarding modal
  const onboardingModal = document.getElementById('onboardingModal');
@@ -3916,6 +3968,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
+cacheDOM();
 applyTheme(loadTheme());
 setEntryAccordion();
 updateDeviceOptions();
@@ -3931,7 +3984,39 @@ checkOnboarding();
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
 
-v6.80 — 2026-06-29 — Code-cleanup pass (no behavior change).
+v6.82 — 2026-06-29 — Bugfix for three regressions introduced by v6.81's DOM
+ caching. Symptoms: theme toggle button empty (no icon/label) in the
+ hamburger menu, "Add BP Measurement" accordion not auto-opening with no
+ data, photo-entry tab visible even without an API key set.
+ Root cause: a top-level `dom.editModal.addEventListener(...)` statement
+ was running during script parsing — BEFORE the INIT block where
+ cacheDOM() populates dom. That made dom.editModal undefined at parse
+ time; `.addEventListener` on undefined threw a TypeError that halted
+ all subsequent top-level code, including the entire INIT block.
+ Fix: moved the listener registration into cacheDOM() itself so it
+ attaches right after the reference is captured. Removed the top-level
+ statement. Added a python audit script in the dev notes (run pre-ship)
+ to flag any future top-level `dom.X` access.
+
+v6.81 — Refactor pass: function splits + DOM caching, zero behavior change.
+ • renderData (was 117 lines) split into computeStats, buildStatsRowHtml,
+ buildChartControlsHtml, buildChartAndTableShellHtml — all pure helpers
+ with no DOM access. renderData itself is now a ~20-line orchestrator
+ that filters → narrows → assembles HTML from the helpers → defers to
+ renderChart + renderTable.
+ • renderChart (was 221 lines) split into hexToRgba, buildChartDatasets,
+ buildXAxisLabels, buildChartScales, recommendedMaxLinesPlugin (factory),
+ showChartPointPopup, populateYAxisLabels. renderChart is now a ~30-line
+ orchestrator. recommendedMaxLinesPlugin returns a fresh plugin per call
+ so theme switches pick up new colors via closure.
+ • DOM caching: new dom = {} object populated by cacheDOM() as the first
+ INIT step. Replaced 28 repeated getElementById calls on long-lived
+ nodes (chartTooltip, tagAutocomplete, tagFilterDropdown, editModal,
+ confirmModal, onboardModal). Dynamic elements (#yAxisFixed, #tableBody,
+ #chartHintPopup — rebuilt on each renderData) NOT cached because
+ renderData's innerHTML replacement invalidates the reference.
+
+v6.80 — Code-cleanup pass (no behavior change).
  • Deleted dead .filter-active-bar placeholder rule.
  • Centralized localStorage access in a `store` wrapper (~11 call sites);
  all reads tolerate sandboxed/blocked storage, all writes silently no-op.
