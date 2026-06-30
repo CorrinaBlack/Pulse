@@ -1,4 +1,4 @@
-<!-- Pulse v6.76 — 2026-06-29 | Two changes to the recommended-max chart references. (1) Y-axis labels: the "120" tick is now tinted in the systolic color (red) and the "80" tick in the diastolic color (blue), matching the colors of the in-chart reference lines so a glance at the y-axis tells you what's ideal-max for each series. Implemented via inline color style on the .y-tick divs when t.value === 120 or 80; other ticks unchanged. (2) In-chart annotation text changed from "Max Sys 120" / "Max Dia 80" to "Ideal Sys ↓ 120" / "Ideal Dia ↓ 80" — friendlier wording with a real down-arrow character (U+2193) reinforcing "stay below this value". -->
+<!-- Pulse v6.77 — 2026-06-29 | Refined chart reference markers. (1) In-canvas text labels ("Ideal Sys ↓ 120" / "Ideal Dia ↓ 80") removed — they conflicted with the leftmost data and the y-axis now carries the same information. The translucent dashed lines themselves stay. (2) Y-axis 120 and 80 ticks now also get a colored ↓ down-arrow prefix in their respective series colors, so "↓ 120" reads in red and "↓ 80" reads in blue. Single source of identification on the y-axis; the dashed lines just extend that across the chart visually. Plugin simplified (font/textBaseline/textAlign setup removed, drawLine reduced to just stroke). -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3403,18 +3403,15 @@ function renderChart(series) {
  const { ctx, chartArea, scales } = chart;
  const yScale = scales.y;
  if (!yScale) return;
- // Lines kept translucent so they read as reference, not data; labels use
- // full-saturation series color so "Max Sys 120" reads clearly as red and
- // "Max Dia 80" clearly as blue.
+ // Lines kept translucent so they read as reference, not data. The y-axis
+ // tick labels (rendered separately in HTML below) identify which line is
+ // which via color and a ↓ prefix, so no in-canvas text is needed here.
  const sysLineColor = hexToRgba(C.systolic, 0.4);
  const diaLineColor = hexToRgba(C.diastolic, 0.4);
  ctx.save();
  ctx.lineWidth = 1.5;
  ctx.setLineDash([6, 4]);
- ctx.font = "10px 'DM Mono', monospace";
- ctx.textBaseline = 'bottom';
- ctx.textAlign = 'left';
- const drawLine = (value, lineColor, labelColor, label) => {
+ const drawLine = (value, lineColor) => {
  const yPx = yScale.getPixelForValue(value);
  if (yPx < chartArea.top || yPx > chartArea.bottom) return;
  ctx.beginPath();
@@ -3422,11 +3419,9 @@ function renderChart(series) {
  ctx.moveTo(chartArea.left, yPx);
  ctx.lineTo(chartArea.right, yPx);
  ctx.stroke();
- ctx.fillStyle = labelColor;
- ctx.fillText(label, chartArea.left + 4, yPx - 2);
  };
- drawLine(120, sysLineColor, C.systolic, 'Ideal Sys ↓ 120');
- drawLine(80, diaLineColor, C.diastolic, 'Ideal Dia ↓ 80');
+ drawLine(120, sysLineColor);
+ drawLine(80, diaLineColor);
  ctx.restore();
  },
  };
@@ -3491,12 +3486,14 @@ function renderChart(series) {
  const yScale = chartInstance.scales.y;
  yAxisHost.innerHTML = yScale.ticks.map(t => {
  const yPx = yScale.getPixelForValue(t.value);
- // Tint the ideal-max ticks so 120 reads as red and 80 as blue, matching
- // the in-chart "Ideal Sys ↓ 120" / "Ideal Dia ↓ 80" reference lines.
+ // Tint the ideal-max ticks so 120 reads as red and 80 as blue, with a
+ // small down arrow prefix in the same color reinforcing "stay below".
+ // Pairs with the (label-less) dashed reference lines in the chart canvas.
  let colorStyle = '';
- if (t.value === 120) colorStyle = `color:${C.systolic};`;
- else if (t.value === 80) colorStyle = `color:${C.diastolic};`;
- return `<div class="y-tick" style="top:${yPx}px;${colorStyle}">${t.value}</div>`;
+ let prefix = '';
+ if (t.value === 120) { colorStyle = `color:${C.systolic};`; prefix = '↓ '; }
+ else if (t.value === 80) { colorStyle = `color:${C.diastolic};`; prefix = '↓ '; }
+ return `<div class="y-tick" style="top:${yPx}px;${colorStyle}">${prefix}${t.value}</div>`;
  }).join('');
  // Trim the y-axis-fixed height to the chart-area bottom (with a small
  // buffer so the bottom half of the lowest label doesn't clip). Without
