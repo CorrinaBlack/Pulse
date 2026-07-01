@@ -1,4 +1,4 @@
-<!-- Pulse v6.84 — see CHANGELOG at end of file -->
+<!-- Pulse v6.85 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1567,7 +1567,7 @@ function loadData() {
  // Legacy format: stored as a bare array. Migrate to versioned envelope.
  if (Array.isArray(parsed)) return migrateData(parsed, 0);
  // Versioned format: { version, state.records }
- return migrateData(parsed.state.records || [], parsed.version || 0);
+ return migrateData(parsed.records || [], parsed.version || 0);
  } catch { return []; }
 }
 
@@ -4053,6 +4053,26 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.85 — 2026-06-29 — Emergency fix for data-loss regression introduced by
+ v6.84's state migration. Symptom: page refresh appeared to wipe all
+ records; adding new data worked briefly but was gone again on the next
+ refresh.
+ Root cause: the word-boundary regex in v6.84's state migration replaced
+ `records` inside `parsed.records` in loadData() — turning it into
+ `parsed.state.records`. That property doesn't exist on the parsed
+ localStorage envelope, so the access threw, the try/catch returned
+ [], and every reload showed empty data.
+ The saved localStorage envelope was ALWAYS correct — saveData continued
+ writing the right shape. Only the read path was broken. Fix: single
+ character-level edit at line 1570, `parsed.state.records` →
+ `parsed.records`. All previously-saved data returns on next refresh.
+ Ran a full audit for any other `\w+\.state\.\w+` patterns; that was
+ the only over-replacement.
+ Lesson for future find-and-replace passes: negative lookbehind on
+ `(?<!state\.)` isn't enough — property accesses through OTHER objects
+ (parsed.X, data.X, etc.) also get matched. Should scan the diff for
+ all X.state.Y patterns before shipping.
 
 v6.84 — 2026-06-29 — Structural cleanup: globals folded into a state object,
  Esc handler restructured, JSDoc added to core functions. No behavior
