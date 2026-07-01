@@ -1,4 +1,4 @@
-<!-- Pulse v6.86 — see CHANGELOG at end of file -->
+<!-- Pulse v6.87 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1612,6 +1612,11 @@ const state = {
  currentSortedRecords: [],
  currentTagFilter: null,
  _dismissTooltipHandler: null,
+ // Once the user toggles the Add BP Measurement accordion at least once,
+ // setEntryAccordion() stops auto-managing it — their choice wins for the
+ // rest of the session. Not persisted across reloads; a fresh page load
+ // resets to the auto default (open when there's no data or OCR pending).
+ entryAccordionUserToggled: false,
 };
 
 
@@ -1682,15 +1687,16 @@ function fmtDT(iso) {
 /** Classify a systolic/diastolic reading into an AHA-inspired category.
  * Order matters — Crisis is checked first (either value hitting threshold),
  * then High 2, High 1, Elevated (systolic-only trigger), Hypotension (either),
- * with Normal as the default. Returns { label, color } where color is a CSS
- * variable or literal usable as a fill/border. */
+ * with Normal as the default. Returns { label, color, range } where color is
+ * a CSS variable/literal and range is the FDA-style numeric threshold string
+ * used in the chart-controls category indicator. */
 function bpCategory(sys, dia) {
- if (sys >= 180 || dia >= 120) return { label:'Crisis', color:'var(--purple)' };
- if (sys >= 140 || dia >= 90) return { label:'High 2', color:'var(--red)' };
- if (sys >= 130 || dia >= 80) return { label:'High 1', color:'var(--orange)' };
- if (sys >= 120 && dia < 80) return { label:'Elevated', color:'var(--yellow)' };
- if (sys < 90 || dia < 60) return { label:'Hypotension', color:'#6ab8d4' };
- return { label:'Normal', color:'var(--green)' };
+ if (sys >= 180 || dia >= 120) return { label:'Crisis', color:'var(--purple)', range: '180+ / 120+' };
+ if (sys >= 140 || dia >= 90) return { label:'High 2', color:'var(--red)', range: '140+ / 90+' };
+ if (sys >= 130 || dia >= 80) return { label:'High 1', color:'var(--orange)', range: '130\u2013139 / 80\u201389' };
+ if (sys >= 120 && dia < 80) return { label:'Elevated', color:'var(--yellow)', range: '120\u2013129 / <80' };
+ if (sys < 90 || dia < 60) return { label:'Hypotension', color:'#6ab8d4', range: '<90/60' };
+ return { label:'Normal', color:'var(--green)', range: '<120/80' };
 }
 
 function nowLocalISO() {
@@ -1810,9 +1816,15 @@ document.addEventListener('click', (e) => {
 
 function toggleAccordion(id) {
  document.getElementById(id).classList.toggle('open');
+ // Any user click on the entry accordion locks in their preference — from
+ // this point on, setEntryAccordion() defers to it for the rest of the session.
+ if (id === 'acc-entry') state.entryAccordionUserToggled = true;
 }
 
 function setEntryAccordion() {
+ // Once the user has explicitly opened or collapsed the entry accordion,
+ // stop auto-managing it. Their choice sticks for the rest of the session.
+ if (state.entryAccordionUserToggled) return;
  const hasData = state.records.length > 0;
  const hasPending = state.ocrQueue.length > 0;
  const el = document.getElementById('acc-entry');
@@ -2181,6 +2193,12 @@ async function handleFiles(files) {
  '. Supported: PNG, JPG, JPEG, HEIC.', 'warning');
  }
  if (list.length === 0) return;
+ // Warn (but don't block) when the user drops more than the per-batch cap.
+ // Extras beyond MAX_FILES_PER_BATCH are silently dropped by the slice
+ // below — the toast makes that behavior visible.
+ if (list.length > CONFIG.MAX_FILES_PER_BATCH) {
+ toast('Only the first ' + CONFIG.MAX_FILES_PER_BATCH + ' photos will be parsed. Drop the rest in a second batch.', 'warning', 4000);
+ }
  const toProcess = list.slice(0, CONFIG.MAX_FILES_PER_BATCH);
 
  // Add all items to the queue up front so the user sees them as spinners
@@ -2904,7 +2922,7 @@ function buildChartControlsHtml(selectionCount, tagFilter, cat) {
  return `
  <div class="chart-controls">
  <div class="chart-top-row">
- ${cat ? `<div class="chart-category-inline" style="color:${cat.color}">● ${cat.label}</div>` : '<div></div>'}
+ ${cat ? `<div class="chart-category-inline" style="color:${cat.color}"><strong>${cat.label}:</strong> ${cat.range}</div>` : '<div></div>'}
  <div class="chart-top-row-right">
  ${selectionCount > 0 ? `
  <div class="chart-selection-inline">
@@ -4124,6 +4142,28 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.87 — 2026-06-29 — Three UX tweaks:
+ • Entry accordion — once the user toggles the "Add BP Measurement"
+ accordion (either direction), their choice sticks for the rest of
+ the session. Auto-close on data-add no longer overrides an
+ explicitly-opened accordion. Implemented via a new
+ state.entryAccordionUserToggled flag set by toggleAccordion() when
+ targeting 'acc-entry'; setEntryAccordion() early-returns when the
+ flag is set. Not persisted across page reloads — fresh load resets
+ to the auto default.
+ • Category label — the chart-controls category indicator now shows the
+ FDA range along with the label: "NORMAL: <120/80" (or "HIGH 1:
+ 130–139 / 80–89" etc.) with the label + colon bold and the range
+ in regular weight. Leading ● dot removed to give the range room.
+ bpCategory() now returns `range` alongside `label` + `color`; ranges
+ pulled from the same FDA data used by the categories popover.
+ • Photo upload cap — dropping / selecting more than 10 photos at once
+ now shows a warning toast ("Only the first 10 photos will be parsed.
+ Drop the rest in a second batch.") that auto-dismisses after 4s.
+ Extras are still silently dropped by the existing slice at
+ CONFIG.MAX_FILES_PER_BATCH; the toast just makes that behavior
+ visible instead of surprising.
 
 v6.86 — 2026-06-29 — Three UX tweaks: tag dedup, API key modal, category
  indicator moves into chart-top-row. Also mopped up more string damage
