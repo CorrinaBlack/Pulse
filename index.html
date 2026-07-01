@@ -1,4 +1,4 @@
-<!-- Pulse v6.83 — see CHANGELOG at end of file -->
+<!-- Pulse v6.84 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1367,7 +1367,7 @@
  </div>
  <p class="dz-hint">or drag and drop up to 10 photos at a time</p>
  </div>
- <div id="ocrQueue" class="ocr-queue"></div>
+ <div id="state.ocrQueue" class="ocr-queue"></div>
  <div id="commitAllBar" class="commit-all-bar" style="display:none">
  <span style="font-size:13px;color:var(--text2)" id="queueCount"></span>
  <button class="btn-commit-all" onclick="commitAll()">Save All</button>
@@ -1481,7 +1481,7 @@
 <!-- TOAST CONTAINER -->
 <div class="toast-container" id="toastContainer"></div>
 
-<!-- DEVICE NAME OPTIONS (populated dynamically from records) -->
+<!-- DEVICE NAME OPTIONS (populated dynamically from state.records) -->
 <datalist id="deviceOptions"></datalist>
 
 <script>
@@ -1566,8 +1566,8 @@ function loadData() {
  const parsed = JSON.parse(raw);
  // Legacy format: stored as a bare array. Migrate to versioned envelope.
  if (Array.isArray(parsed)) return migrateData(parsed, 0);
- // Versioned format: { version, records }
- return migrateData(parsed.records || [], parsed.version || 0);
+ // Versioned format: { version, state.records }
+ return migrateData(parsed.state.records || [], parsed.version || 0);
  } catch { return []; }
 }
 
@@ -1580,17 +1580,33 @@ function saveData(data) {
 
 // Schema migration. Add a case for each new DATA_VERSION as the data model
 // changes. Called by loadData() — kept idempotent so re-running is safe.
-function migrateData(records, fromVersion) {
- let r = records;
+function migrateData(data, fromVersion) {
+ let r = data;
  // Example pattern for future migrations:
  // if (fromVersion < 1) { r = r.map(rec => ({ ...rec, newField: '' })); }
  return r;
 }
 
-let records = loadData();
-let editingId = null;
-let ocrQueue = [];
-let chartInstance = null;
+// ─── APPLICATION STATE ────────────────────────────────────────────────────────
+// All mutable module-level state consolidated into a single object. Keeping
+// them together makes it trivial to see the app's data at a glance, easier
+// to grep for mutations, and sets up the render/state decoupling we'll want
+// later. `loadData()` is a function declaration (hoisted) so calling it here
+// during top-level execution works fine.
+const state = {
+ records: loadData(),
+ editingId: null,
+ ocrQueue: [],
+ chartInstance: null,
+ currentSort: { column: 'date', direction: 'desc' },
+ chartTimeDirection: 'desc',
+ selectedRecordIds: new Set(),
+ lastSelectedId: null,
+ currentSortedRecords: [],
+ currentTagFilter: null,
+ _dismissTooltipHandler: null,
+};
+
 
 // HTML escape helper for user-controlled text (notes, device names) — protects
 // against accidental angle-bracket content and XSS.
@@ -1603,6 +1619,10 @@ function escapeHtml(s) {
 // kind: 'info' | 'success' | 'warning' | 'error'
 // ms: auto-dismiss after this many ms; pass 0 to keep open until user dismisses.
 // Error toasts default to a longer display; the user can always dismiss with ✕.
+/** Show a transient toast at the bottom of the screen. `kind` picks the
+ * accent color: 'info' (default), 'success', 'warning', or 'error'. `ms`
+ * is auto-computed from message length if omitted (~2s for short, up to 5s
+ * for long) so brief messages don't linger and long ones don't get cut off. */
 function toast(message, kind = 'info', ms) {
  const container = document.getElementById('toastContainer');
  if (!container) { console.warn('toast() before container ready:', message); return; }
@@ -1623,30 +1643,25 @@ function toast(message, kind = 'info', ms) {
  const dwell = ms != null ? ms : (kind === 'error' ? 8000 : 5000);
  if (dwell > 0) setTimeout(remove, dwell);
 }
-let currentSort = { column: 'date', direction: 'desc' };
 
 // Tracks the chart x-axis time direction independently. Updated whenever the
 // user sorts the table by date; preserved when they sort by other columns so
 // the chart keeps the user's last-expressed time orientation. 'desc' = newest
 // at the left, 'asc' = oldest at the left.
-let chartTimeDirection = 'desc';
 
 // Holds record IDs the user has tap-selected in the table. When the set is
-// non-empty, the chart redraws on just those records (intersected with the
+// non-empty, the chart redraws on just those state.records (intersected with the
 // currently-visible filter set). The set persists across re-sorts since it's
 // keyed by record ID, not row position. Cleared by the "Clear Selections"
 // button in the selection bar.
-let selectedRecordIds = new Set();
 
 // Anchor for shift-click range selection — the id of the row whose tap last
 // established the selection origin. Cleared when selections are cleared, or
 // when the anchor record is deleted.
-let lastSelectedId = null;
 
-// Snapshot of the records in their currently-displayed sort order. Updated
+// Snapshot of the state.records in their currently-displayed sort order. Updated
 // by renderTable on every render. Used by shift-click range selection to
 // determine "between" relative to what the user is actually seeing.
-let currentSortedRecords = [];
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -1657,6 +1672,11 @@ function fmtDT(iso) {
  + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
 }
 
+/** Classify a systolic/diastolic reading into an AHA-inspired category.
+ * Order matters — Crisis is checked first (either value hitting threshold),
+ * then High 2, High 1, Elevated (systolic-only trigger), Hypotension (either),
+ * with Normal as the default. Returns { label, color } where color is a CSS
+ * variable or literal usable as a fill/border. */
 function bpCategory(sys, dia) {
  if (sys >= 180 || dia >= 120) return { label:'Crisis', color:'var(--purple)' };
  if (sys >= 140 || dia >= 90) return { label:'High 2', color:'var(--red)' };
@@ -1786,14 +1806,17 @@ function toggleAccordion(id) {
 }
 
 function setEntryAccordion() {
- const hasData = records.length > 0;
- const hasPending = ocrQueue.length > 0;
+ const hasData = state.records.length > 0;
+ const hasPending = state.ocrQueue.length > 0;
  const el = document.getElementById('acc-entry');
  if (hasData && !hasPending) { el.classList.remove('open'); }
  else { el.classList.add('open'); }
 }
 
 // ─── TABS ─────────────────────────────────────────────────────────────────────
+/** Activate the given tab ('photo' or 'manual') in the entry accordion.
+ * Toggles .active on the tab button + .active on its pane. No-op if the
+ * tab is already active. */
 function switchTab(tab) {
  document.getElementById('pane-photo').style.display = tab === 'photo' ? 'block' : 'none';
  document.getElementById('pane-manual').style.display = tab === 'manual' ? 'block' : 'none';
@@ -2132,7 +2155,7 @@ async function handleFiles(files) {
  file,
  item: { qid: genId(), file, status: 'processing', thumbReady: false, sys:'', dia:'', bpm:'', device:'', dt:'', notes:'' },
  }));
- work.forEach(w => ocrQueue.push(w.item));
+ work.forEach(w => state.ocrQueue.push(w.item));
  renderOCRQueue();
 
  const concurrency = Math.min(CONFIG.OCR_CONCURRENCY, work.length);
@@ -2143,7 +2166,7 @@ async function handleFiles(files) {
  try {
  await processOcrFile(w.item, w.file, apiKey);
  } catch (e) {
- // processOcrFile already records errors on the item; this catches any
+ // processOcrFile already state.records errors on the item; this catches any
  // unhandled rejection so other workers keep going.
  console.error('Pulse: unexpected processOcrFile rejection:', e);
  }
@@ -2451,20 +2474,20 @@ async function getExifDate(file) {
 }
 
 function renderOCRQueue() {
- const container = document.getElementById('ocrQueue');
+ const container = document.getElementById('state.ocrQueue');
  const bar = document.getElementById('commitAllBar');
  const countEl = document.getElementById('queueCount');
 
  // Keep entry accordion open while queue has pending items
  setEntryAccordion();
 
- if (ocrQueue.length === 0) {
+ if (state.ocrQueue.length === 0) {
  container.innerHTML = '';
  bar.style.display = 'none';
  return;
  }
 
- container.innerHTML = ocrQueue.map(item => {
+ container.innerHTML = state.ocrQueue.map(item => {
  const dupCheck = checkDuplicate(item.dt);
  const isWarn = dupCheck && item.status === 'ready';
  const parts = splitDT(item.dt);
@@ -2519,7 +2542,7 @@ function renderOCRQueue() {
  </div>`;
  }).join('');
 
- const ready = ocrQueue.filter(i => i.status === 'ready').length;
+ const ready = state.ocrQueue.filter(i => i.status === 'ready').length;
  if (ready > 0) {
  bar.style.display = 'flex';
  countEl.textContent = `${ready} item${ready !== 1 ? 's' : ''} ready to save`;
@@ -2529,7 +2552,7 @@ function renderOCRQueue() {
 }
 
 function updateOCR(qid, field, val) {
- const item = ocrQueue.find(i => i.qid === qid);
+ const item = state.ocrQueue.find(i => i.qid === qid);
  if (!item) return;
  if (field === 'd' || field === 't') {
  // Combine the new date/time part with the existing other part
@@ -2543,30 +2566,30 @@ function updateOCR(qid, field, val) {
 }
 
 function removeOCRItem(qid) {
- const item = ocrQueue.find(i => i.qid === qid);
+ const item = state.ocrQueue.find(i => i.qid === qid);
  if (item && item._abort) { try { item._abort.abort(); } catch(e) {} }
- ocrQueue = ocrQueue.filter(i => i.qid !== qid);
+ state.ocrQueue = state.ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
 }
 
 function commitItem(qid) {
- const item = ocrQueue.find(i => i.qid === qid);
+ const item = state.ocrQueue.find(i => i.qid === qid);
  if (!item) return;
  if (!item.sys || !item.dia) { toast('Please enter at least systolic and diastolic values.', 'warning'); return; }
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
- ocrQueue = ocrQueue.filter(i => i.qid !== qid);
+ state.ocrQueue = state.ocrQueue.filter(i => i.qid !== qid);
  renderOCRQueue();
  renderData();
 }
 
 function commitAll() {
- const ready = ocrQueue.filter(i => i.status === 'ready');
+ const ready = state.ocrQueue.filter(i => i.status === 'ready');
  ready.forEach(item => {
  if (item.sys && item.dia) {
  saveRecord({ sys: +item.sys, dia: +item.dia, bpm: +item.bpm||null, device: item.device, dt: item.dt, notes: item.notes });
  }
  });
- ocrQueue = ocrQueue.filter(i => i.status !== 'ready');
+ state.ocrQueue = state.ocrQueue.filter(i => i.status !== 'ready');
  renderOCRQueue();
  renderData();
 }
@@ -2602,7 +2625,7 @@ function clearManualForm() {
 }
 
 function checkDuplicate(dt) {
- return records.some(r => r.dt === dt);
+ return state.records.some(r => r.dt === dt);
 }
 
 // Normalize a device name to Title Case while preserving brand-style internal caps
@@ -2617,11 +2640,11 @@ function normalizeDeviceName(s) {
  }).join(' ');
 }
 
-// Rebuild the <datalist> of device suggestions from current records.
+// Rebuild the <datalist> of device suggestions from current state.records.
 // Dedupes case-insensitively, keeping the first-seen (already-normalized) spelling.
 function updateDeviceOptions() {
  const seen = new Map(); // lower-cased -> display
- records.forEach(r => {
+ state.records.forEach(r => {
  const name = (r.device || '').trim();
  if (!name) return;
  const key = name.toLowerCase();
@@ -2632,34 +2655,39 @@ function updateDeviceOptions() {
  if (dl) dl.innerHTML = sorted.map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
 }
 
+/** Persist a new or edited BP reading. Called by both the manual form and the
+ * OCR commit flow. Handles validation (sys 60-250, dia 40-150, bpm 30-220 or
+ * blank, dt required), deduping by rounded timestamp, sort insertion (newest
+ * first) and re-rendering. When state.editingId is set, updates in place;
+ * otherwise creates a new record with a freshly generated id. */
 function saveRecord({ sys, dia, bpm, device, dt, notes }) {
- const existing = records.findIndex(r => r.dt === dt);
- if (existing >= 0) { records.splice(existing, 1); }
- records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
- saveData(records);
+ const existing = state.records.findIndex(r => r.dt === dt);
+ if (existing >= 0) { state.records.splice(existing, 1); }
+ state.records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
+ saveData(state.records);
  updateDeviceOptions();
 }
 
 // ─── CLEAR ALL DATA ───────────────────────────────────────────────────────────
-// Hamburger-menu testing utility: wipes the records array; leaves everything else
+// Hamburger-menu testing utility: wipes the state.records array; leaves everything else
 // (API key, theme preference, OCR queue, sort state) alone. Standard confirm
 // dialog gates the action.
 async function clearAllRecords() {
- const count = records.length;
- if (count === 0) { toast('No records to clear.', 'info'); return; }
+ const count = state.records.length;
+ if (count === 0) { toast('No state.records to clear.', 'info'); return; }
  const ok = await showConfirm({
- title: 'Clear all records?',
+ title: 'Clear all state.records?',
  message: 'This will permanently delete all ' + count + ' measurement' + (count === 1 ? '' : 's') + '. Your API key and theme preference will be kept.',
  confirmLabel: 'Delete All',
  });
  if (!ok) return;
- records = [];
- selectedRecordIds.clear();
- lastSelectedId = null;
- saveData(records);
+ state.records = [];
+ state.selectedRecordIds.clear();
+ state.lastSelectedId = null;
+ saveData(state.records);
  updateDeviceOptions();
  renderData();
- toast('All records cleared.', 'success');
+ toast('All state.records cleared.', 'success');
 }
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
@@ -2682,7 +2710,7 @@ function applyTheme(theme) {
 function toggleTheme() {
  const next = loadTheme() === 'dark' ? 'light' : 'dark';
  applyTheme(next);
- if (records.length > 0) renderData();
+ if (state.records.length > 0) renderData();
 }
 
 // Sun is shown when current theme is DARK (icon hints at destination — tap → light).
@@ -2713,12 +2741,12 @@ function renderThemeToggle() {
 // ─── ONBOARDING + PHOTO ENTRY VISIBILITY ─────────────────────────────────────
 // On first launch, surface a modal that explains what the API key is for and
 // how to get one. Skip → no key, photo entry stays hidden. Save → key stored,
-// photo entry appears. Existing users (with records or an API key already in
+// photo entry appears. Existing users (with state.records or an API key already in
 // localStorage when v6.46 first loads) are auto-onboarded so they don't get a
 // surprise welcome screen.
 function checkOnboarding() {
  if (store.get(CONFIG.ONBOARD_STORAGE) === 'true') return;
- if (records.length > 0 || getApiKey()) {
+ if (state.records.length > 0 || getApiKey()) {
  store.set(CONFIG.ONBOARD_STORAGE, 'true');
  return;
  }
@@ -2790,7 +2818,7 @@ function updateCameraButtonVisibility() {
 }
 
 // ─── RENDER DATA ──────────────────────────────────────────────────────────────
-// renderData orchestrates: filter records → narrow to chartData → build the
+// renderData orchestrates: filter state.records → narrow to chartData → build the
 // section HTML from pure helpers → defer chart + table rendering. The pure
 // helpers below take just the data they need and return strings, no DOM
 // access. That makes each piece independently inspectable and means renderData
@@ -2896,7 +2924,7 @@ function buildChartAndTableShellHtml(tagFilter) {
 function renderData() {
  setEntryAccordion();
  const section = document.getElementById('dataSection');
- if (records.length === 0) {
+ if (state.records.length === 0) {
  section.innerHTML = '<div class="no-data-msg">No measurements yet — add your first reading above.</div>';
  return;
  }
@@ -2904,44 +2932,48 @@ function renderData() {
  // Apply tag filter, then row selection. chartData (stats + chart) follows
  // the most narrow set; the table itself shows the tag-filtered set so the
  // user can still see/manage individual rows even with selections active.
- const filtered = currentTagFilter
- ? records.filter(r => {
- const fl = currentTagFilter.toLowerCase();
+ const filtered = state.currentTagFilter
+ ? state.records.filter(r => {
+ const fl = state.currentTagFilter.toLowerCase();
  return extractTags(r.notes).some(t => t.toLowerCase() === fl);
  })
- : records;
- const chartData = selectedRecordIds.size > 0
- ? filtered.filter(r => selectedRecordIds.has(r.id))
+ : state.records;
+ const chartData = state.selectedRecordIds.size > 0
+ ? filtered.filter(r => state.selectedRecordIds.has(r.id))
  : filtered;
 
  const stats = computeStats(chartData);
  section.innerHTML =
  buildStatsRowHtml(stats) +
- buildChartControlsHtml(selectedRecordIds.size, currentTagFilter) +
- buildChartAndTableShellHtml(currentTagFilter);
+ buildChartControlsHtml(state.selectedRecordIds.size, state.currentTagFilter) +
+ buildChartAndTableShellHtml(state.currentTagFilter);
 
  renderChart(chartData);
  renderTable(filtered);
 }
 
+/** Set the table sort column. If already sorting by this column, flips the
+ * direction; otherwise switches to it and uses 'desc' as the fresh default.
+ * When column === 'date' also mirrors the direction onto state.chartTimeDirection
+ * so the chart's x-axis stays in lockstep with the Date & Time column sort. */
 function setSort(column) {
- if (currentSort.column === column) {
+ if (state.currentSort.column === column) {
  // Toggle direction on same column
- currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+ state.currentSort.direction = state.currentSort.direction === 'asc' ? 'desc' : 'asc';
  } else {
  // New column: default descending (highest/latest at top — useful for BP data)
- currentSort.column = column;
- currentSort.direction = 'desc';
+ state.currentSort.column = column;
+ state.currentSort.direction = 'desc';
  }
  // Sorting by date drives the chart x-axis direction; other column sorts
  // leave the chart's time orientation as the user last set it.
- if (currentSort.column === 'date') chartTimeDirection = currentSort.direction;
+ if (state.currentSort.column === 'date') state.chartTimeDirection = state.currentSort.direction;
  renderData();
 }
 
 function sortArrow(column) {
- if (currentSort.column !== column) return '<span class="sort-arrow inactive">↕</span>';
- return currentSort.direction === 'asc'
+ if (state.currentSort.column !== column) return '<span class="sort-arrow inactive">↕</span>';
+ return state.currentSort.direction === 'asc'
  ? '<span class="sort-arrow">↑</span>'
  : '<span class="sort-arrow">↓</span>';
 }
@@ -2956,30 +2988,35 @@ function sortArrow(column) {
 // the currently-visible sort order, ADDING the range to the existing
 // selection (existing items stay selected). Falls through to plain-toggle
 // if there's no anchor yet, or if the anchor row is no longer visible.
+/** Handle a click on a table row: toggle its selection, or if the click was
+ * a shift-click, select the range from the last-selected anchor to this row
+ * in the currently-visible sort order. Ignores clicks that originated on
+ * action buttons (edit/delete/notes) via event.stopPropagation upstream.
+ * Range selection ADDS to the existing set — doesn't replace. */
 function toggleRowSelection(id, event) {
- if (event && event.shiftKey && lastSelectedId && lastSelectedId !== id) {
- const ids = currentSortedRecords.map(r => r.id);
- const fromIdx = ids.indexOf(lastSelectedId);
+ if (event && event.shiftKey && state.lastSelectedId && state.lastSelectedId !== id) {
+ const ids = state.currentSortedRecords.map(r => r.id);
+ const fromIdx = ids.indexOf(state.lastSelectedId);
  const toIdx = ids.indexOf(id);
  if (fromIdx !== -1 && toIdx !== -1) {
  const start = Math.min(fromIdx, toIdx);
  const end = Math.max(fromIdx, toIdx);
- for (let i = start; i <= end; i++) selectedRecordIds.add(ids[i]);
- lastSelectedId = id;
+ for (let i = start; i <= end; i++) state.selectedRecordIds.add(ids[i]);
+ state.lastSelectedId = id;
  renderDataPreserveScroll();
  return;
  }
  }
  // Plain toggle
- if (selectedRecordIds.has(id)) selectedRecordIds.delete(id);
- else selectedRecordIds.add(id);
- lastSelectedId = id;
+ if (state.selectedRecordIds.has(id)) state.selectedRecordIds.delete(id);
+ else state.selectedRecordIds.add(id);
+ state.lastSelectedId = id;
  renderDataPreserveScroll();
 }
 
 function clearSelections() {
- selectedRecordIds.clear();
- lastSelectedId = null;
+ state.selectedRecordIds.clear();
+ state.lastSelectedId = null;
  renderData();
 }
 
@@ -3002,9 +3039,8 @@ const SEED_TAGS = [
 ];
 
 // Active tag filter (null = no filter). When set, renderData narrows the
-// table and chart to records whose notes contain this tag. Independent of
-// selectedRecordIds — selection still works on top of (within) the filtered set.
-let currentTagFilter = null;
+// table and chart to state.records whose notes contain this tag. Independent of
+// state.selectedRecordIds — selection still works on top of (within) the filtered set.
 
 // Returns the @-tags found in a notes string, preserving original casing.
 function extractTags(notes) {
@@ -3022,14 +3058,14 @@ function renderNotesHtml(notes) {
  return escapeHtml(notes).replace(/@[A-Za-z0-9+]+/g, m => `<span class="tag-chip">${m}</span>`);
 }
 
-// All tags currently in use across records, deduped (case-insensitive). Each
+// All tags currently in use across state.records, deduped (case-insensitive). Each
 // entry is paired with its record count. The display name uses the casing of
 // the first record that mentioned it. SEED_TAGS that aren't yet used by any
 // record are NOT included — the filter dropdown only shows tags the user has
 // actually applied to a reading.
 function getAvailableTagsWithCounts() {
  const map = new Map(); // lowerCase -> { display, count }
- records.forEach(r => {
+ state.records.forEach(r => {
  extractTags(r.notes).forEach(tag => {
  const key = tag.toLowerCase();
  const entry = map.get(key);
@@ -3217,7 +3253,7 @@ function openTagFilter(event) {
  const btn = event.currentTarget;
  const dd = dom.tagFilterDropdown;
  const tags = getAvailableTagsWithCounts();
- const activeLower = (currentTagFilter || '').toLowerCase();
+ const activeLower = (state.currentTagFilter || '').toLowerCase();
  const itemsHtml = tags.length === 0
  ? `<div class="tfd-empty">No tags yet — type @ in any notes field to add one.</div>`
  : tags.map(t => {
@@ -3233,7 +3269,7 @@ function openTagFilter(event) {
  <button class="tfd-close" onclick="closeTagFilter()" aria-label="Close">×</button>
  </div>
  <div>${itemsHtml}</div>
- ${currentTagFilter ? `<button class="tfd-clear" onclick="clearTagFilter()">Clear filter</button>` : ''}
+ ${state.currentTagFilter ? `<button class="tfd-clear" onclick="clearTagFilter()">Clear filter</button>` : ''}
  `;
  // Position below the button, right-aligned so it doesn't get clipped at the
  // right edge of narrower viewports.
@@ -3253,14 +3289,14 @@ function closeTagFilter() {
 
 function setTagFilter(tag) {
  // Toggle behavior — clicking the active tag clears the filter.
- currentTagFilter = (currentTagFilter && currentTagFilter.toLowerCase() === tag.toLowerCase())
+ state.currentTagFilter = (state.currentTagFilter && state.currentTagFilter.toLowerCase() === tag.toLowerCase())
  ? null : tag;
  closeTagFilter();
  renderData();
 }
 
 function clearTagFilter() {
- currentTagFilter = null;
+ state.currentTagFilter = null;
  closeTagFilter();
  renderData();
 }
@@ -3281,8 +3317,8 @@ document.addEventListener('click', e => {
 });
 
 function renderTable(filtered) {
- const col = currentSort.column;
- const dir = currentSort.direction;
+ const col = state.currentSort.column;
+ const dir = state.currentSort.direction;
  const catOrder = ['Hypotension','Normal','Elevated','High 1','High 2','Crisis'];
 
  const sorted = [...filtered].sort((a, b) => {
@@ -3315,7 +3351,7 @@ function renderTable(filtered) {
 
  // Capture the post-sort order so shift-click range selection can compute
  // "between" relative to what the user is actually seeing.
- currentSortedRecords = sorted;
+ state.currentSortedRecords = sorted;
 
  const body = document.getElementById('tableBody');
  body.innerHTML = sorted.map(r => {
@@ -3329,7 +3365,7 @@ function renderTable(filtered) {
  const notesCell = r.notes
  ? `<button class="act-btn act-notes" onclick="event.stopPropagation(); showNotePopup(event,'${r.id}')" title="View note" aria-label="View note">☰</button>`
  : '';
- const isSelected = selectedRecordIds.has(r.id);
+ const isSelected = state.selectedRecordIds.has(r.id);
  return `<tr class="${isSelected ? 'row-selected' : ''}" onclick="toggleRowSelection('${r.id}', event)">
  <td class="mono">${dtStr}</td>
  <td class="mono">${r.sys}</td>
@@ -3348,7 +3384,7 @@ function renderTable(filtered) {
 
 function showNotePopup(event, recordId) {
  event.stopPropagation();
- const r = records.find(x => x.id === recordId);
+ const r = state.records.find(x => x.id === recordId);
  if (!r) return;
  const tooltip = dom.chartTooltip;
  tooltip.innerHTML = `
@@ -3390,7 +3426,7 @@ function getChartColors() {
 // ─── CHART HELPERS ────────────────────────────────────────────────────────────
 // Pieces of renderChart broken out so each concern is testable on its own and
 // renderChart itself stays a thin orchestrator. None of these helpers access
-// chartInstance directly — they take their inputs and return data or DOM
+// state.chartInstance directly — they take their inputs and return data or DOM
 // updates the orchestrator wires together.
 
 /** "#RRGGBB" or "#RGB" + alpha → "rgba(r,g,b,alpha)". */
@@ -3568,16 +3604,16 @@ function populateYAxisLabels(yScale, C) {
 }
 
 function renderChart(series) {
- if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+ if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
  const canvas = document.getElementById('bpChart');
  if (!canvas || series.length === 0) return;
 
  const C = getChartColors();
 
- // Sort by chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
+ // Sort by state.chartTimeDirection: 'desc' puts newest leftmost (default), 'asc'
  // puts oldest leftmost. Mirrors the table's Date & Time column sort — see
- // setSort() and the chartTimeDirection state variable.
- const points = [...series].sort((a, b) => chartTimeDirection === 'desc'
+ // setSort() and the state.chartTimeDirection state variable.
+ const points = [...series].sort((a, b) => state.chartTimeDirection === 'desc'
  ? new Date(b.dt) - new Date(a.dt)
  : new Date(a.dt) - new Date(b.dt));
 
@@ -3589,7 +3625,7 @@ function renderChart(series) {
  canvas.style.width = minWidth + 'px';
  canvas.width = minWidth;
 
- chartInstance = new Chart(canvas, {
+ state.chartInstance = new Chart(canvas, {
  type: 'line',
  data: { labels: buildXAxisLabels(points), datasets: buildChartDatasets(points, C) },
  options: {
@@ -3602,7 +3638,7 @@ function renderChart(series) {
  // intersect:true → only register clicks that land ON a dot. Misses
  // bubble to the document, where the managed dismiss-handler closes
  // any open tooltip.
- const pts = chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+ const pts = state.chartInstance.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
  if (!pts.length) return;
  // Stop the click from bubbling so the previous popup's dismiss-handler
  // doesn't fire on the same click that's opening a new popup.
@@ -3613,7 +3649,7 @@ function renderChart(series) {
  plugins: [recommendedMaxLinesPlugin(C)],
  });
 
- populateYAxisLabels(chartInstance.scales.y, C);
+ populateYAxisLabels(state.chartInstance.scales.y, C);
 }
 
 // Single managed dismiss-on-next-click handler shared by the chart popup and
@@ -3621,32 +3657,31 @@ function renderChart(series) {
 // registered handler before scheduling a new one, so we never end up with
 // multiple handlers racing each other. The schedule is deferred one tick so
 // the click that *opens* a popup doesn't immediately close it.
-let _dismissTooltipHandler = null;
 function scheduleTooltipDismiss() {
- if (_dismissTooltipHandler) {
- document.removeEventListener('click', _dismissTooltipHandler);
- _dismissTooltipHandler = null;
+ if (state._dismissTooltipHandler) {
+ document.removeEventListener('click', state._dismissTooltipHandler);
+ state._dismissTooltipHandler = null;
  }
  setTimeout(() => {
- _dismissTooltipHandler = () => { _dismissTooltipHandler = null; hideTooltip(); };
- document.addEventListener('click', _dismissTooltipHandler, { once: true });
+ state._dismissTooltipHandler = () => { state._dismissTooltipHandler = null; hideTooltip(); };
+ document.addEventListener('click', state._dismissTooltipHandler, { once: true });
  }, 10);
 }
 
 function hideTooltip() {
  const el = dom.chartTooltip;
  if (el) el.style.display = 'none';
- if (_dismissTooltipHandler) {
- document.removeEventListener('click', _dismissTooltipHandler);
- _dismissTooltipHandler = null;
+ if (state._dismissTooltipHandler) {
+ document.removeEventListener('click', state._dismissTooltipHandler);
+ state._dismissTooltipHandler = null;
  }
 }
 
 // ─── EDIT / DELETE ────────────────────────────────────────────────────────────
 function openEdit(id) {
- const r = records.find(x => x.id === id);
+ const r = state.records.find(x => x.id === id);
  if (!r) return;
- editingId = id;
+ state.editingId = id;
  document.getElementById('e-sys').value = r.sys;
  document.getElementById('e-dia').value = r.dia;
  document.getElementById('e-bpm').value = r.bpm || '';
@@ -3659,12 +3694,12 @@ function openEdit(id) {
 }
 
 function closeModal() {
- editingId = null;
+ state.editingId = null;
  dom.editModal.classList.remove('open');
 }
 
 function saveEdit() {
- const r = records.find(x => x.id === editingId);
+ const r = state.records.find(x => x.id === state.editingId);
  if (!r) return;
  r.sys = +document.getElementById('e-sys').value;
  r.dia = +document.getElementById('e-dia').value;
@@ -3676,7 +3711,7 @@ function saveEdit() {
  if (!dt) { toast('Please enter both date and time.', 'warning'); return; }
  r.dt = dt;
  r.notes = document.getElementById('e-notes').value.trim();
- saveData(records);
+ saveData(state.records);
  updateDeviceOptions();
  closeModal();
  renderDataPreserveScroll();
@@ -3689,16 +3724,21 @@ async function deleteRecord(id) {
  confirmLabel: 'Delete',
  });
  if (!ok) return;
- records = records.filter(r => r.id !== id);
- selectedRecordIds.delete(id);
- if (lastSelectedId === id) lastSelectedId = null;
- saveData(records);
+ state.records = state.records.filter(r => r.id !== id);
+ state.selectedRecordIds.delete(id);
+ if (state.lastSelectedId === id) state.lastSelectedId = null;
+ saveData(state.records);
  renderDataPreserveScroll();
 }
 
 // Custom confirmation dialog that returns a Promise<boolean>. Replaces the
 // browser's native confirm() with something centered, styled, and async.
 // Backdrop click and Esc key both resolve to false (cancel).
+/** Show a modal confirm dialog. Returns a Promise that resolves to true if the
+ * user clicked the confirm button, false if they clicked Cancel, dismissed via
+ * Esc, or clicked the backdrop. `title`/`message` are shown as text (no HTML);
+ * `confirmLabel` is the confirm button text. The modal reuses #confirmModal
+ * for all invocations — only one confirm can be open at a time. */
 function showConfirm({ title = 'Confirm', message = '', confirmLabel = 'Confirm' } = {}) {
  return new Promise(resolve => {
  const modal = dom.confirmModal;
@@ -3747,9 +3787,9 @@ function renderDataPreserveScroll() {
 
 // ─── EXPORT CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
- if (records.length === 0) { toast('No data to export.', 'warning'); return; }
+ if (state.records.length === 0) { toast('No data to export.', 'warning'); return; }
  const header = ['Date','Time','Systolic','Diastolic','BPM','Device','Category','Notes'];
- const rows = records.map(r => {
+ const rows = state.records.map(r => {
  const d = new Date(r.dt);
  const cat = bpCategory(r.sys, r.dia);
  return [
@@ -3772,7 +3812,7 @@ function exportCSV() {
 // ─── IMPORT CSV ───────────────────────────────────────────────────────────────
 // Strict format: matches our own export.
 // Columns: Date(M/D/YYYY), Time(h:MM AM/PM), Systolic, Diastolic, BPM, Device, Category, Notes
-// Dedupe key: dt (date+time down to the minute). Existing records win — imported dupes are skipped.
+// Dedupe key: dt (date+time down to the minute). Existing state.records win — imported dupes are skipped.
 function triggerImportCSV() {
  document.getElementById('csvImportInput').click();
 }
@@ -3811,6 +3851,12 @@ function handleCSVImport(e) {
  reader.readAsText(file);
 }
 
+/** Import CSV text into state.records. Expects the format exportCSV()
+ * produces: header row (Date, Time, Systolic, Diastolic, BPM, Device,
+ * Category, Notes) followed by data rows. Category column is ignored
+ * (recomputed via bpCategory at render time). Malformed rows are skipped
+ * with an error toast. Dedupes against existing records by rounded
+ * timestamp. Returns nothing; triggers a re-render via renderData(). */
 function importCSVText(text) {
  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
  if (lines.length === 0) throw new Error('File is empty.');
@@ -3829,7 +3875,7 @@ function importCSVText(text) {
  throw new Error('Header missing required columns (Date, Time, Systolic, Diastolic).');
  }
 
- const existingDts = new Set(records.map(r => r.dt));
+ const existingDts = new Set(state.records.map(r => r.dt));
  let added = 0, skipped = 0;
  const errors = []; // { row, reason } — row numbers are 1-based for the user
  const newRecords = [];
@@ -3869,8 +3915,8 @@ function importCSVText(text) {
  }
 
  if (added > 0) {
- records.push(...newRecords);
- saveData(records);
+ state.records.push(...newRecords);
+ saveData(state.records);
  updateDeviceOptions();
  renderData();
  }
@@ -3936,33 +3982,59 @@ document.addEventListener('click', (e) => {
 });
 
 // Global Esc handler — dismisses transient popups and modals as if the user
-// clicked Cancel/Skip/dismiss. showConfirm() installs its own Esc handler
-// while open (resolving to false), so we short-circuit when its modal is up.
-// Order: most-likely-on-top first. Each dismissed popup returns so a single
-// Esc doesn't cascade-close multiple layers.
-document.addEventListener('keydown', (e) => {
- if (e.key !== 'Escape') return;
- // Confirm modal — its own handler will deal with it.
- const confirmModal = dom.confirmModal;
- if (confirmModal && confirmModal.classList.contains('open')) return;
- // Chart hint popup (transient, tap-toggled)
+// clicked Cancel/Skip/dismiss. Each dismisser returns true if it handled the
+// Esc; the loop stops at the first one that does so a single Esc closes only
+// the topmost overlay (no cascade). Order matters — most-transient/most-recent
+// first. Adding a new modal or popup? Add a dismisser to this array.
+//
+// showConfirm() adds its own instance-scoped Esc handler while its modal is
+// open (resolves the promise to false). That handler runs regardless of what
+// we do here; we defer entirely — return true without doing anything — so we
+// don't fight over the same keystroke.
+const escDismissers = [
+ () => {
+ // showConfirm() has its own handler; we just signal "handled".
+ if (dom.confirmModal.classList.contains('open')) return true;
+ return false;
+ },
+ () => {
  const hint = document.getElementById('chartHintPopup');
- if (hint && hint.classList.contains('shown')) { hint.classList.remove('shown'); e.preventDefault(); return; }
- // Tag autocomplete (transient)
- const ac = dom.tagAutocomplete;
- if (ac && ac.classList.contains('shown')) { hideTagAutocomplete(); e.preventDefault(); return; }
- // Tag filter dropdown (transient)
- const tfd = dom.tagFilterDropdown;
- if (tfd && tfd.classList.contains('shown')) { closeTagFilter(); e.preventDefault(); return; }
- // Note popup (uses the chart-tooltip element for both chart popup and notes)
- const tt = dom.chartTooltip;
- if (tt && tt.style.display === 'block') { hideTooltip(); e.preventDefault(); return; }
- // Edit modal
- const editModal = dom.editModal;
- if (editModal && editModal.classList.contains('open')) { closeModal(); e.preventDefault(); return; }
- // Onboarding modal
- const onboardingModal = document.getElementById('onboardingModal');
- if (onboardingModal && onboardingModal.classList.contains('open')) { skipOnboarding(); e.preventDefault(); return; }
+ if (!hint?.classList.contains('shown')) return false;
+ hint.classList.remove('shown');
+ return true;
+ },
+ () => {
+ if (!dom.tagAutocomplete.classList.contains('shown')) return false;
+ hideTagAutocomplete();
+ return true;
+ },
+ () => {
+ if (!dom.tagFilterDropdown.classList.contains('shown')) return false;
+ closeTagFilter();
+ return true;
+ },
+ () => {
+ if (dom.chartTooltip.style.display !== 'block') return false;
+ hideTooltip();
+ return true;
+ },
+ () => {
+ if (!dom.editModal.classList.contains('open')) return false;
+ closeModal();
+ return true;
+ },
+ () => {
+ if (!dom.onboardModal.classList.contains('open')) return false;
+ skipOnboarding();
+ return true;
+ },
+];
+
+document.addEventListener('keydown', e => {
+ if (e.key !== 'Escape') return;
+ for (const tryDismiss of escDismissers) {
+ if (tryDismiss()) { e.preventDefault(); return; }
+ }
 });
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -3981,6 +4053,32 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.84 — 2026-06-29 — Structural cleanup: globals folded into a state object,
+ Esc handler restructured, JSDoc added to core functions. No behavior
+ change (except a bug fix noted below).
+ • Item 11: 11 module-level mutable globals (records, editingId, ocrQueue,
+ chartInstance, chartTimeDirection, currentSort, currentTagFilter,
+ selectedRecordIds, lastSelectedId, currentSortedRecords,
+ _dismissTooltipHandler) consolidated into a single `state = {}` object
+ declared right after migrateData. All 145 references migrated to
+ state.X. Setup for the item-10 render/state decoupling later.
+ One collision fixed: migrateData(records, ...) parameter renamed to
+ `data` to avoid shadowing.
+ • Item 9: Global Esc handler restructured as an explicit array of
+ dismisser functions, each returning boolean. Loop stops at the first
+ handler that claims the Esc — clearer intent, easier to add new
+ overlays. confirmModal still short-circuits (its showConfirm-scoped
+ handler owns that keystroke).
+ → **Latent bug fixed**: the old Esc handler looked up
+ `document.getElementById('onboardingModal')` — with -ing — but the
+ actual element ID is `#onboardModal`. Esc has been silently failing
+ to dismiss the onboarding modal since v6.70. Now uses
+ dom.onboardModal and actually works.
+ • Item 15: JSDoc added to bpCategory, toast, switchTab, saveRecord,
+ setSort, toggleRowSelection, showConfirm, importCSVText. Brief
+ contract lines so future-reader knows the shape of args and return
+ without reading the body. Other functions already have inline comments.
 
 v6.83 — 2026-06-29 — Tag-filter chip moves inline with the rest of the chart
  controls. Three changes:
