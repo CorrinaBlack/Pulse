@@ -1,4 +1,4 @@
-<!-- Pulse v6.85 — see CHANGELOG at end of file -->
+<!-- Pulse v6.86 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -699,37 +699,36 @@
  .stat-value { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--text); }
  .stat-value span { font-size: 14px; color: var(--text3); font-family: 'DM Sans', sans-serif; }
  .stat-pattern { display: block; margin-top: 6px; }
- .stat-cat-row {
- font-family: 'DM Mono', monospace;
- font-size: 11px;
- text-transform: uppercase;
- letter-spacing: 1px;
- margin-top: 8px;
- margin-bottom: 4px;
- text-align: right;
- }
-
- /* Chart controls — right-aligned column of icons between the Normal-status
- row and the chart. Top item is always the info ⓘ that shows the filter hint
- on hover (desktop) or tap (touch). When a tag filter or row selection is
- active, an additional row appears below with a ✕ close. Replaces the old
- selection-bar / filter-active-bar elements that used to sit between the
- chart and the table. */
+ /* Chart controls — a compact row above the chart with the average-reading
+ category on the LEFT and filter/info controls on the RIGHT. Row-selection
+ count + ✕ and tag chip + ✕ appear conditionally next to the info ⓘ. The
+ whole thing replaced the old separate .stat-cat-row + selection-bar to
+ conserve vertical space. */
  .chart-controls {
  display: flex;
  flex-direction: column;
- align-items: flex-end;
  gap: 6px;
  margin: 10px 0 8px;
  }
- /* Top row — info ⓘ always present at the far right; filter indicators
- (row-selection count + ✕, tag chip + ✕) stack inline to its LEFT in the
- order they're added. Both ✕ clear an active filter so both render in
- accent red; the info ⓘ stays muted until hover. */
  .chart-top-row {
  display: flex;
  align-items: center;
  gap: 8px;
+ }
+ .chart-category-inline {
+ font-family: 'DM Mono', monospace;
+ font-size: 11px;
+ text-transform: uppercase;
+ letter-spacing: 1px;
+ }
+ /* Right cluster (selection / tag / info) — margin-left auto pushes it to
+ the right edge even when the category cell is empty (rendered as an empty
+ div placeholder to keep the layout stable). */
+ .chart-top-row-right {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ margin-left: auto;
  }
  .chart-selection-inline {
  display: inline-flex;
@@ -1256,7 +1255,7 @@
  <div class="hamburger-menu" id="hamburgerMenu">
  <button class="menu-item" id="themeToggle" onclick="toggleTheme();closeMenu()"></button>
  <div class="menu-divider"></div>
- <button class="menu-item" onclick="toggleApiPanel();closeMenu()">
+ <button class="menu-item" onclick="openApiKeyModal();closeMenu()">
  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="6.5" r="3.5"/><path d="M12 10v11"/><path d="M12 16h3"/><path d="M12 19h2"/></svg>
  <span>API Key</span>
  </button>
@@ -1314,18 +1313,24 @@
  </div>
 </header>
 
-<!-- API KEY PANEL -->
-<div id="apiPanel" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;">
- <div style="max-width:900px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
- <div style="flex:1;min-width:220px">
- <label style="font-size:10px;font-family:'DM Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Anthropic API Key</label>
- <input type="password" id="apiKeyInput" placeholder="sk-ant-…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:8px 12px;outline:none;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+<!-- API KEY MODAL — opened from the hamburger menu. Shows a masked preview of
+ the currently-saved key (if any), lets the user enter a new one, and offers
+ Clear + Cancel. First-launch onboarding uses its own separate #onboardModal. -->
+<div class="modal-overlay" id="apiKeyModal">
+ <div class="modal" style="max-width: 460px;">
+ <h3>API Key</h3>
+ <p style="color: var(--text2); font-size: 13px; line-height: 1.55; margin: 0 0 14px;">Your Anthropic API key is stored only in your browser's localStorage and sent only to <span style="font-family: 'DM Mono', monospace; color: var(--text);">api.anthropic.com</span>.</p>
+ <div id="apiKeyCurrent" style="display:none; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px; font-family: 'DM Mono', monospace; font-size: 13px;">
+ <div style="font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Currently saved</div>
+ <div id="apiKeyMasked" style="color: var(--text);"></div>
  </div>
- <div style="display:flex;gap:8px;align-items:flex-end;padding-top:18px">
- <button class="submit-btn" style="margin-top:0;padding:9px 18px;font-size:13px" onclick="saveApiKey()">Save Key</button>
- <button class="export-btn" onclick="clearApiKey()">Clear</button>
+ <label style="font-size: 10px; font-family: 'DM Mono', monospace; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 5px;" id="apiKeyInputLabel">Anthropic API key</label>
+ <input type="password" id="apiKeyInput" placeholder="sk-ant-…" style="width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Mono', monospace; font-size: 13px; padding: 8px 12px; outline: none; margin-bottom: 16px; box-sizing: border-box;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+ <div style="display: flex; justify-content: flex-end; gap: 8px;">
+ <button class="btn-sm btn-cancel" onclick="closeApiKeyModal()">Cancel</button>
+ <button class="btn-sm btn-cancel" id="apiKeyClearBtn" onclick="clearApiKey()" style="display:none">Clear</button>
+ <button class="btn-sm btn-commit" onclick="saveApiKey()">Save Key</button>
  </div>
- <div style="font-size:12px;color:var(--text3);flex-basis:100%">🔒 Stored only in your browser's localStorage — never sent anywhere except directly to api.anthropic.com</div>
  </div>
 </div>
 
@@ -1367,7 +1372,7 @@
  </div>
  <p class="dz-hint">or drag and drop up to 10 photos at a time</p>
  </div>
- <div id="state.ocrQueue" class="ocr-queue"></div>
+ <div id="ocrQueue" class="ocr-queue"></div>
  <div id="commitAllBar" class="commit-all-bar" style="display:none">
  <span style="font-size:13px;color:var(--text2)" id="queueCount"></span>
  <button class="btn-commit-all" onclick="commitAll()">Save All</button>
@@ -1551,12 +1556,14 @@ function cacheDOM() {
  dom.editModal = document.getElementById('editModal');
  dom.confirmModal = document.getElementById('confirmModal');
  dom.onboardModal = document.getElementById('onboardModal');
+ dom.apiKeyModal = document.getElementById('apiKeyModal');
  // Close edit modal on overlay click (target is the modal backdrop itself,
  // not any child). Lives here so the listener attaches after the reference
  // is captured; previously it was a top-level statement that ran before
  // cacheDOM() at INIT, throwing TypeError on undefined and halting the
  // entire INIT block (theme toggle, accordion default-open, photo-tab gating).
  dom.editModal.addEventListener('click', e => { if (e.target === dom.editModal) closeModal(); });
+ dom.apiKeyModal.addEventListener('click', e => { if (e.target === dom.apiKeyModal) closeApiKeyModal(); });
 }
 
 function loadData() {
@@ -1852,7 +1859,7 @@ function saveApiKey() {
  if (!val) { toast('Please enter an API key.', 'warning'); return; }
  store.set(API_KEY_STORAGE, val);
  updateApiKeyBtn();
- toggleApiPanel();
+ closeApiKeyModal();
  toast('API key saved.', 'success');
  updatePhotoEntryVisibility();
 }
@@ -1861,6 +1868,8 @@ function clearApiKey() {
  store.del(API_KEY_STORAGE);
  document.getElementById('apiKeyInput').value = '';
  updateApiKeyBtn();
+ closeApiKeyModal();
+ toast('API key cleared.', 'success');
  updatePhotoEntryVisibility();
 }
 
@@ -1873,14 +1882,40 @@ function updateApiKeyBtn() {
  btn.style.borderColor = getApiKey() ? 'var(--green)' : '';
 }
 
-function toggleApiPanel() {
- const panel = document.getElementById('apiPanel');
- const isOpen = panel.style.display !== 'none';
- panel.style.display = isOpen ? 'none' : 'block';
- if (!isOpen) {
- document.getElementById('apiKeyInput').value = getApiKey();
- setTimeout(() => document.getElementById('apiKeyInput').focus(), 50);
+/** Format an API key as a masked preview so the user can see it's set without
+ * exposing the full value. sk-ant-abc...xyz9 — first prefix, ellipsis, last 4. */
+function maskApiKey(key) {
+ if (!key) return '';
+ if (key.length <= 12) return '••••••••';
+ const prefixEnd = key.startsWith('sk-ant-') ? 10 : 7;
+ return key.slice(0, prefixEnd) + '…' + key.slice(-4);
+}
+
+function openApiKeyModal() {
+ const modal = dom.apiKeyModal;
+ const current = getApiKey();
+ const currentBox = document.getElementById('apiKeyCurrent');
+ const maskedEl = document.getElementById('apiKeyMasked');
+ const clearBtn = document.getElementById('apiKeyClearBtn');
+ const label = document.getElementById('apiKeyInputLabel');
+ if (current) {
+ currentBox.style.display = 'block';
+ maskedEl.textContent = maskApiKey(current);
+ clearBtn.style.display = '';
+ label.textContent = 'Replace with new key';
+ } else {
+ currentBox.style.display = 'none';
+ clearBtn.style.display = 'none';
+ label.textContent = 'Anthropic API key';
  }
+ document.getElementById('apiKeyInput').value = '';
+ modal.classList.add('open');
+ setTimeout(() => document.getElementById('apiKeyInput').focus(), 50);
+}
+
+function closeApiKeyModal() {
+ dom.apiKeyModal.classList.remove('open');
+ document.getElementById('apiKeyInput').value = '';
 }
 
 // ─── CLAUDE API HELPER ────────────────────────────────────────────────────────
@@ -2474,7 +2509,7 @@ async function getExifDate(file) {
 }
 
 function renderOCRQueue() {
- const container = document.getElementById('state.ocrQueue');
+ const container = document.getElementById('ocrQueue');
  const bar = document.getElementById('commitAllBar');
  const countEl = document.getElementById('queueCount');
 
@@ -2663,7 +2698,7 @@ function updateDeviceOptions() {
 function saveRecord({ sys, dia, bpm, device, dt, notes }) {
  const existing = state.records.findIndex(r => r.dt === dt);
  if (existing >= 0) { state.records.splice(existing, 1); }
- state.records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: notes || '' });
+ state.records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: dedupeTags(notes || '') });
  saveData(state.records);
  updateDeviceOptions();
 }
@@ -2674,9 +2709,9 @@ function saveRecord({ sys, dia, bpm, device, dt, notes }) {
 // dialog gates the action.
 async function clearAllRecords() {
  const count = state.records.length;
- if (count === 0) { toast('No state.records to clear.', 'info'); return; }
+ if (count === 0) { toast('No records to clear.', 'info'); return; }
  const ok = await showConfirm({
- title: 'Clear all state.records?',
+ title: 'Clear all records?',
  message: 'This will permanently delete all ' + count + ' measurement' + (count === 1 ? '' : 's') + '. Your API key and theme preference will be kept.',
  confirmLabel: 'Delete All',
  });
@@ -2687,7 +2722,7 @@ async function clearAllRecords() {
  saveData(state.records);
  updateDeviceOptions();
  renderData();
- toast('All state.records cleared.', 'success');
+ toast('All records cleared.', 'success');
 }
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
@@ -2857,17 +2892,20 @@ function buildStatsRowHtml(stats) {
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
- </div>
- ${cat ? `<div class="stat-cat-row" style="color:${cat.color}">● ${cat.label}</div>` : ''}`;
+ </div>`;
 }
 
-/** Right-aligned column above the chart: info ⓘ (always), inline selection
- * count + ✕ (when rows selected), and tag chip + ✕ (when filtering). All
- * three sit on the same row: selection → tag → info, left to right. */
-function buildChartControlsHtml(selectionCount, tagFilter) {
+/** Chart-controls row above the chart. LEFT: the BP category indicator
+ * (● Normal, Elevated, etc.) matching the averages the chart is showing.
+ * RIGHT (in order): row-selection count + ✕ (when rows selected), tag chip +
+ * ✕ (when filtering), info ⓘ (always). Category may be null when there's no
+ * data to categorize. */
+function buildChartControlsHtml(selectionCount, tagFilter, cat) {
  return `
  <div class="chart-controls">
  <div class="chart-top-row">
+ ${cat ? `<div class="chart-category-inline" style="color:${cat.color}">● ${cat.label}</div>` : '<div></div>'}
+ <div class="chart-top-row-right">
  ${selectionCount > 0 ? `
  <div class="chart-selection-inline">
  <span>${selectionCount} selected</span>
@@ -2881,6 +2919,7 @@ function buildChartControlsHtml(selectionCount, tagFilter) {
  <div class="chart-info-wrap">
  <button class="chart-info-btn" onclick="toggleChartHint(event)" aria-label="How to filter the chart">${_infoSvg}</button>
  <div class="chart-hint-popup" id="chartHintPopup">Tap any row to filter the graph above · Shift-click for a range</div>
+ </div>
  </div>
  </div>
  </div>`;
@@ -2945,7 +2984,7 @@ function renderData() {
  const stats = computeStats(chartData);
  section.innerHTML =
  buildStatsRowHtml(stats) +
- buildChartControlsHtml(state.selectedRecordIds.size, state.currentTagFilter) +
+ buildChartControlsHtml(state.selectedRecordIds.size, state.currentTagFilter, stats.cat) +
  buildChartAndTableShellHtml(state.currentTagFilter);
 
  renderChart(chartData);
@@ -3049,6 +3088,21 @@ function extractTags(notes) {
  return matches || [];
 }
 
+/** Drop duplicate @-tags from a notes string. Keeps the first occurrence
+ * (case-insensitive) and removes subsequent instances along with their
+ * trailing whitespace so no gap is left behind. Preserves all non-tag text. */
+function dedupeTags(notes) {
+ if (!notes) return notes;
+ const seen = new Set();
+ const result = notes.replace(/(@[A-Za-z0-9+]+)(\s*)/g, (match, tag) => {
+ const key = tag.toLowerCase();
+ if (seen.has(key)) return '';
+ seen.add(key);
+ return match;
+ });
+ return result.trim();
+}
+
 // Escapes a notes string and wraps any @-tags in styled chips. Used by both
 // the notes popup and the chart tooltip so tags render consistently.
 function renderNotesHtml(notes) {
@@ -3110,7 +3164,19 @@ function showTagAutocomplete(input) {
  const used = getAvailableTagsWithCounts().map(t => t.display);
  const seedLower = new Set(SEED_TAGS.map(t => t.toLowerCase()));
  const customs = used.filter(t => !seedLower.has(t.toLowerCase()));
- const candidates = [...SEED_TAGS, ...customs];
+ let candidates = [...SEED_TAGS, ...customs];
+ // Hide tags already present in the current notes value — but skip the tag
+ // currently being typed at autocompleteState.atIdx so the completion for it
+ // still appears. Manually-typed dupes elsewhere aren't filtered by the picker;
+ // saveRecord's dedupeTags() strips those at persist time.
+ const partialEnd = autocompleteState.atIdx + 1 + autocompleteState.prefix.length;
+ const beforeAt = input.value.slice(0, autocompleteState.atIdx);
+ const afterCursor = input.value.slice(partialEnd);
+ const alreadyInNote = new Set([
+ ...extractTags(beforeAt).map(t => t.toLowerCase()),
+ ...extractTags(afterCursor).map(t => t.toLowerCase()),
+ ]);
+ candidates = candidates.filter(t => !alreadyInNote.has(t.toLowerCase()));
  const prefixLower = autocompleteState.prefix.toLowerCase();
  const matches = prefixLower === ''
  ? candidates
@@ -4024,6 +4090,11 @@ const escDismissers = [
  return true;
  },
  () => {
+ if (!dom.apiKeyModal.classList.contains('open')) return false;
+ closeApiKeyModal();
+ return true;
+ },
+ () => {
  if (!dom.onboardModal.classList.contains('open')) return false;
  skipOnboarding();
  return true;
@@ -4053,6 +4124,38 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.86 — 2026-06-29 — Three UX tweaks: tag dedup, API key modal, category
+ indicator moves into chart-top-row. Also mopped up more string damage
+ left over from v6.84's state migration.
+ • Tag dedup: new dedupeTags() helper (case-insensitive, keeps first
+ occurrence, consumes trailing whitespace of dropped dupes so no gap is
+ left behind). saveRecord() runs it on notes before persisting. The
+ autocomplete picker also filters out tags already present in the
+ current notes value — but excludes the tag currently being typed
+ (from autocompleteState.atIdx + prefix) so completions for it still
+ appear. Net: user can't easily add a dupe via the picker; if they type
+ one manually, save silently strips it.
+ • API key UI moves from the old inline dropdown panel to a proper
+ centered modal (#apiKeyModal). When a key is already saved, the modal
+ shows a masked preview (sk-ant-abc…xyz9), the input label reads
+ "Replace with new key", and a Clear button appears. Onboarding
+ (#onboardModal) is a separate first-launch flow, unchanged. Wired
+ into cacheDOM, dom cache, Esc handler chain, overlay-click close.
+ Old #apiPanel HTML + toggleApiPanel() removed.
+ • BP category indicator (● Normal etc.) moves from its own
+ .stat-cat-row below the stat cards into the LEFT side of the
+ chart-top-row, on the same line as the selection ✕, tag chip ✕, and
+ info ⓘ. Saves ~15-20px of vertical space. .chart-top-row now uses
+ category-left + margin-left:auto right-cluster layout so the info ⓘ
+ stays right-aligned regardless of whether a category is shown. Old
+ .stat-cat-row CSS deleted.
+ • **Bug cleanup**: found and fixed 5 leftover regex-damaged strings
+ from v6.84 that I missed in the v6.85 audit. Three user-visible
+ (toasts and confirm-title text in clearAllRecords), two structural
+ (HTML `id="state.ocrQueue"` and its matching getElementById call).
+ The structural pair happened to match each other so lookups still
+ worked, but the id contained a `.` which is non-standard. All fixed.
 
 v6.85 — 2026-06-29 — Emergency fix for data-loss regression introduced by
  v6.84's state migration. Symptom: page refresh appeared to wipe all
