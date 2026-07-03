@@ -1,4 +1,4 @@
-<!-- Pulse v6.88 — see CHANGELOG at end of file -->
+<!-- Pulse v6.89 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1360,6 +1360,21 @@
  </div>
 </div>
 
+<!-- TAG CLEANUP MODAL — appears when the user closes Manage Tags after
+ removing tags that appear in existing notes. Per-tag checkbox lets the
+ user decide whether to also strip that tag from the matching records. -->
+<div class="modal-overlay" id="tagCleanupModal">
+ <div class="modal" style="max-width: 460px;">
+ <h3>Tag Cleanup</h3>
+ <p style="color: var(--text2); font-size: 13px; line-height: 1.55; margin: 0 0 14px;">You removed tags that appear in existing notes. Check any you'd also like stripped from those notes:</p>
+ <div id="tagCleanupList" style="max-height: 280px; overflow-y: auto; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 4px; margin-bottom: 16px;"></div>
+ <div style="display: flex; justify-content: flex-end; gap: 8px;">
+ <button class="btn-sm btn-cancel" onclick="dismissTagCleanup()">Skip cleanup</button>
+ <button class="btn-sm btn-commit" onclick="applyTagCleanup()">Apply</button>
+ </div>
+ </div>
+</div>
+
 
 <main>
  <!-- DATA ENTRY -->
@@ -1620,6 +1635,7 @@ function cacheDOM() {
  dom.onboardModal = document.getElementById('onboardModal');
  dom.apiKeyModal = document.getElementById('apiKeyModal');
  dom.tagsModal = document.getElementById('tagsModal');
+ dom.tagCleanupModal = document.getElementById('tagCleanupModal');
  // Close edit modal on overlay click (target is the modal backdrop itself,
  // not any child). Lives here so the listener attaches after the reference
  // is captured; previously it was a top-level statement that ran before
@@ -1628,6 +1644,7 @@ function cacheDOM() {
  dom.editModal.addEventListener('click', e => { if (e.target === dom.editModal) closeModal(); });
  dom.apiKeyModal.addEventListener('click', e => { if (e.target === dom.apiKeyModal) closeApiKeyModal(); });
  dom.tagsModal.addEventListener('click', e => { if (e.target === dom.tagsModal) closeTagsModal(); });
+ dom.tagCleanupModal.addEventListener('click', e => { if (e.target === dom.tagCleanupModal) dismissTagCleanup(); });
 }
 
 function loadData() {
@@ -1685,6 +1702,12 @@ const state = {
  // which itself falls back to DEFAULT_TAGS when nothing is saved. Mutated
  // by addUserTag / removeUserTag; each mutation calls saveUserTags().
  userTags: [],
+ // Session-scoped list of tags removed during the current Manage Tags modal
+ // session — each entry is {tag, count} where count is the number of records
+ // whose notes reference the tag. Populated by removeUserTag(), consumed by
+ // closeTagsModal() to decide whether to show the cleanup confirmation.
+ // Cleared when the modal opens or is fully closed.
+ pendingRemovedTags: [],
 };
 state.userTags = loadUserTags();
 
@@ -2001,24 +2024,51 @@ function closeApiKeyModal() {
 
 // ─── MANAGE TAGS MODAL ────────────────────────────────────────────────────────
 // Add/remove entries in state.userTags via the modal launched from the
-// hamburger menu. Autosaves on every mutation via saveUserTags(). No
-// separate Save/Cancel — each add or remove takes effect immediately.
+// hamburger menu. Autosaves the picker list on every mutation. Notes are
+// NOT touched by removals here — a follow-up cleanup modal (tagCleanupModal)
+// gives the user per-tag checkboxes to also strip removed tags from notes.
+
+/** Count how many records' notes reference `tag` (case-insensitive). Used
+ * both for the immediate toast on ✕ and for the cleanup confirmation list. */
+function getTagUsageCount(tag) {
+ const tagLower = tag.toLowerCase();
+ return state.records.filter(r => extractTags(r.notes).some(t => t.toLowerCase() === tagLower)).length;
+}
 
 function openTagsModal() {
+ state.pendingRemovedTags = [];
  renderTagsList();
  dom.tagsModal.classList.add('open');
  setTimeout(() => document.getElementById('tagsAddInput').focus(), 50);
 }
 
+/** Called by the Done button and by overlay/Esc dismiss. If any removed tag
+ * was in use, defers actual close until the user resolves the cleanup modal.
+ * Otherwise closes directly. */
 function closeTagsModal() {
+ const inUse = state.pendingRemovedTags.filter(p => p.count > 0);
+ if (inUse.length > 0) {
+ renderTagCleanupList(inUse);
+ dom.tagCleanupModal.classList.add('open');
+ // Leave tagsModal open behind — cleanup modal sits on top. finalCloseTagsModal
+ // dismisses both after the user resolves the cleanup dialog.
+ return;
+ }
+ finalCloseTagsModal();
+}
+
+/** Actually close the Manage Tags modal and reset session state. Called
+ * directly by closeTagsModal for the no-cleanup path, and by
+ * dismissTagCleanup / applyTagCleanup once the follow-up modal resolves. */
+function finalCloseTagsModal() {
  dom.tagsModal.classList.remove('open');
+ dom.tagCleanupModal.classList.remove('open');
  document.getElementById('tagsAddInput').value = '';
+ state.pendingRemovedTags = [];
 }
 
 /** Render the tag list into #tagsList in alphabetical case-insensitive order.
- * Called on modal open and after every add/remove. Renders in-place; the
- * modal wrapper stays open throughout so scroll position within the list is
- * preserved through short lists but resets on any structural render. */
+ * Called on modal open and after every add/remove. */
 function renderTagsList() {
  const host = document.getElementById('tagsList');
  if (!host) return;
@@ -2030,7 +2080,7 @@ function renderTagsList() {
  host.innerHTML = sorted.map(tag => `
  <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 8px; font-family:'DM Mono', monospace; font-size:13px; color: var(--text);">
  <span>${escapeHtml(tag)}</span>
- <button class="chart-clear-btn" onclick="removeUserTag(${JSON.stringify(tag)})" aria-label="Remove ${escapeHtml(tag)}">${_xSvg}</button>
+ <button class="chart-clear-btn" onclick='removeUserTag(${JSON.stringify(tag)})' aria-label="Remove ${escapeHtml(tag)}">${_xSvg}</button>
  </div>
  `).join('');
 }
@@ -2043,10 +2093,7 @@ function addUserTag() {
  const input = document.getElementById('tagsAddInput');
  let raw = input.value.trim();
  if (!raw) return;
- // Auto-add @ if omitted; leaves an @-prefixed input as-is.
  if (!raw.startsWith('@')) raw = '@' + raw;
- // Enforce the same character set that extractTags/dedupeTags recognize —
- // otherwise the tag would render but never match anywhere.
  if (!/^@[A-Za-z0-9+]+$/.test(raw)) {
  toast('Tags can only contain letters, digits, and + after the @.', 'warning');
  return;
@@ -2058,21 +2105,78 @@ function addUserTag() {
  }
  state.userTags.push(raw);
  saveUserTags();
+ // If the user just re-added a tag they removed earlier in this session,
+ // pull it out of the pending removal list so it doesn't appear in the
+ // cleanup confirmation on Done.
+ state.pendingRemovedTags = state.pendingRemovedTags.filter(p => p.tag.toLowerCase() !== rawLower);
  input.value = '';
  renderTagsList();
  input.focus();
 }
 
 /** Remove a tag from state.userTags by exact string match. Persists and
- * re-renders. Existing notes that mentioned this tag are unaffected — the
- * tag just stops appearing in the picker; any past mentions still show as
- * chips via the notes-rendering pass. */
+ * re-renders. Records the removal + usage count in state.pendingRemovedTags
+ * so closeTagsModal() can surface the cleanup confirmation. Immediate toast
+ * for in-use tags nudges the user that Done will offer per-tag cleanup. */
 function removeUserTag(tag) {
  const idx = state.userTags.indexOf(tag);
  if (idx < 0) return;
+ const usage = getTagUsageCount(tag);
+ state.pendingRemovedTags.push({ tag, count: usage });
  state.userTags.splice(idx, 1);
  saveUserTags();
  renderTagsList();
+ if (usage > 0) {
+ toast(`Removed ${tag}. Still in ${usage} note${usage === 1 ? '' : 's'} — cleanup offered on Done.`, 'info', 3500);
+ }
+}
+
+/** Render the checkbox list in the cleanup modal. Each row has a checkbox
+ * (unchecked by default — conservative), the tag, and its usage count. */
+function renderTagCleanupList(entries) {
+ const host = document.getElementById('tagCleanupList');
+ if (!host) return;
+ host.innerHTML = entries.map(({ tag, count }) => `
+ <label style="display:flex; align-items:center; gap:10px; padding:6px 8px; cursor:pointer; font-family:'DM Mono', monospace; font-size:13px; color: var(--text);">
+ <input type="checkbox" data-tag='${JSON.stringify(tag)}' style="accent-color: var(--accent); width:16px; height:16px; margin:0; cursor:pointer;">
+ <span style="flex:1">${escapeHtml(tag)}</span>
+ <span style="color: var(--text3); font-size:12px;">${count} note${count === 1 ? '' : 's'}</span>
+ </label>
+ `).join('');
+}
+
+/** Cancel path from the cleanup modal — user chose not to touch notes.
+ * Notes stay as-is (still contain the removed tags). Everything closes. */
+function dismissTagCleanup() {
+ finalCloseTagsModal();
+}
+
+/** Apply path from the cleanup modal — strips checked tags from every note
+ * that references them. Uncheck all + Apply = same as Skip cleanup.
+ * saveData persists the mutation; renderData refreshes the visible UI. */
+function applyTagCleanup() {
+ const checked = Array.from(document.querySelectorAll('#tagCleanupList input:checked'));
+ const tagsToStrip = checked.map(el => JSON.parse(el.dataset.tag));
+ if (tagsToStrip.length === 0) {
+ finalCloseTagsModal();
+ return;
+ }
+ const tagsLower = new Set(tagsToStrip.map(t => t.toLowerCase()));
+ let touched = 0;
+ state.records.forEach(r => {
+ if (!r.notes) return;
+ const before = r.notes;
+ // Reuse the dedupeTags approach: match tag + trailing whitespace so we
+ // consume both together and no gap is left behind. Then normalize spaces.
+ r.notes = r.notes.replace(/(@[A-Za-z0-9+]+)(\s*)/g, (match, tag) => {
+ return tagsLower.has(tag.toLowerCase()) ? '' : match;
+ }).replace(/[ \t]{2,}/g, ' ').trim();
+ if (r.notes !== before) touched++;
+ });
+ saveData(state.records);
+ renderData();
+ toast(`Removed ${tagsToStrip.length} tag${tagsToStrip.length === 1 ? '' : 's'} from ${touched} note${touched === 1 ? '' : 's'}.`, 'success');
+ finalCloseTagsModal();
 }
 
 // ─── CLAUDE API HELPER ────────────────────────────────────────────────────────
@@ -4254,6 +4358,11 @@ const escDismissers = [
  return true;
  },
  () => {
+ if (!dom.tagCleanupModal.classList.contains('open')) return false;
+ dismissTagCleanup();
+ return true;
+ },
+ () => {
  if (!dom.tagsModal.classList.contains('open')) return false;
  closeTagsModal();
  return true;
@@ -4288,6 +4397,36 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.89 — 2026-06-29 — Fix broken Manage Tags delete + add per-tag cleanup flow.
+ • Bug fix: the ✕ next to each tag in Manage Tags didn't work.
+ removeUserTag's onclick used `JSON.stringify(tag)` inside a
+ double-quoted attribute, producing onclick="removeUserTag("@Coffee")"
+ — the inner double quotes prematurely terminated the attribute.
+ Fixed by swapping the outer attribute quotes to single quotes; tag
+ regex forbids apostrophes so this is safe.
+ • New feature: when a removed tag was still in use in existing notes,
+ an immediate info toast fires: "Removed @Coffee. Still in 8 notes
+ — cleanup offered on Done." (3.5s). Removals of unused tags stay
+ silent — the row disappearing is feedback enough.
+ • New feature: clicking Done on Manage Tags now checks whether any
+ removed tag had usage > 0. If so, a follow-up Tag Cleanup modal
+ opens with a per-tag checkbox list ("@Coffee — 8 notes"). Two
+ buttons: Skip cleanup (notes untouched) or Apply (strips checked
+ tags from every note that referenced them, using the same regex
+ + whitespace normalization pattern as dedupeTags). Records save;
+ UI rerenders. Success toast summarizes the operation.
+ • Design: cleanup default state is unchecked — user opts IN to
+ destroying tag mentions from existing notes rather than opting
+ out. Apply with nothing checked is a no-op (same as Skip).
+ • State: new state.pendingRemovedTags array — session-scoped [{tag,
+ count}] populated on removal, consumed on close, cleared when
+ anything closes the flow. Re-adding a tag mid-session pulls it
+ back out of the pending list so it doesn't spuriously appear in
+ the cleanup confirmation.
+ • Wiring: tagCleanupModal cached, overlay-click dismiss, Esc chain
+ (comes BEFORE tagsModal in the chain since it's on top when both
+ open).
 
 v6.88 — 2026-06-29 — Editable tag seed list. Users can add and remove tags in
  the picker via a new Manage Tags modal launched from the hamburger menu.
