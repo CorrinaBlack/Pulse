@@ -1,4 +1,4 @@
-<!-- Pulse v6.89 -->
+<!-- Pulse v6.92 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1591,15 +1591,17 @@ const store = {
 // store falls back to when nothing's yet saved. Kept up here (before state)
 // so loadUserTags() can reference it during state initialization.
 const DEFAULT_TAGS = [
- '@4ShotsCoffee', '@PostCoffee', '@PreCoffee', '@NoCoffee',
- '@IrregularHeartBeats',
- '@Whey', '@Collagen', '@Supplements', '@Glycine+NAC',
- '@GoodSleep', '@PoorSleep',
- '@Unwell', '@Nausea', '@Headache', '@Migraine',
+ '@4ShotsCoffee',
+ '@CollagenPeptides',
+ '@Creatine',
+ '@Glycine+NAC',
+ '@GoodSleep',
+ '@PoorSleep',
+ '@Ran',
+ '@SupplementStack',
+ '@Walked',
  '@Weights',
- '@Walked5mi', '@Walked4mi', '@Walked3mi',
- '@Ran1mi', '@Ran2mi', '@Ran3mi', '@Ran4mi', '@Ran5mi', '@Ran6mi',
- '@LazyDay',
+ '@WheyProtein',
 ];
 
 /** Load the user-managed tag list from localStorage. Falls back to a fresh
@@ -2965,9 +2967,35 @@ function updateDeviceOptions() {
 function saveRecord({ sys, dia, bpm, device, dt, notes }) {
  const existing = state.records.findIndex(r => r.dt === dt);
  if (existing >= 0) { state.records.splice(existing, 1); }
- state.records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: dedupeTags(notes || '') });
+ const cleanNotes = dedupeTags(notes || '');
+ state.records.push({ id: genId(), sys, dia, bpm, device: normalizeDeviceName(device || ''), dt, notes: cleanNotes });
  saveData(state.records);
  updateDeviceOptions();
+ // Promote any newly-introduced tag in the notes to a first-class entry
+ // in the managed tag list. Runs after the record is saved so the tag
+ // "count" in Manage Tags reflects reality when the user opens it.
+ addNewTagsFromNotes(cleanNotes);
+}
+
+/** Scan `notes` for @-tags and add any not already in state.userTags to it
+ * (case-insensitive dedupe against the existing list; preserves the exact
+ * casing the user typed). Called from saveRecord so manual entry, edit
+ * modal saves, and OCR commits all promote unfamiliar tags automatically.
+ * Silent — no toast; the tag just appears in Manage Tags next time it's
+ * opened. */
+function addNewTagsFromNotes(notes) {
+ const found = extractTags(notes);
+ if (found.length === 0) return;
+ const userLower = new Set(state.userTags.map(t => t.toLowerCase()));
+ let added = false;
+ for (const tag of found) {
+ const key = tag.toLowerCase();
+ if (userLower.has(key)) continue;
+ state.userTags.push(tag);
+ userLower.add(key);
+ added = true;
+ }
+ if (added) saveUserTags();
 }
 
 // ─── CLEAR ALL DATA ───────────────────────────────────────────────────────────
@@ -3419,15 +3447,11 @@ function hideTagAutocomplete() {
 
 function showTagAutocomplete(input) {
  const ac = dom.tagAutocomplete;
- // Build merged candidate list: user's managed tag list + any custom tags
- // already used in notes but not in the managed list.
- const used = getAvailableTagsWithCounts().map(t => t.display);
- const userLower = new Set(state.userTags.map(t => t.toLowerCase()));
- const customs = used.filter(t => !userLower.has(t.toLowerCase()));
- let candidates = [...state.userTags, ...customs];
- // Alphabetical case-insensitive so tag lookup is predictable regardless
- // of when a tag was added to the managed list.
- candidates.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+ // Candidates: the user's managed tag list, alphabetical case-insensitive
+ // for predictable ordering. New tags typed inline are auto-added to
+ // state.userTags on save (addNewTagsFromNotes) so this list is
+ // authoritative — no separate merge with tags-used-in-notes needed.
+ let candidates = state.userTags.slice().sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
  // Hide tags already present in the current notes value — but skip the tag
  // currently being typed at autocompleteState.atIdx so the completion for it
  // still appears. Manually-typed dupes elsewhere aren't filtered by the picker;
@@ -4392,5 +4416,6 @@ updateCameraButtonVisibility();
 checkOnboarding();
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js"></script>
+
 </body>
 </html>
