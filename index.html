@@ -1,4 +1,4 @@
-<!-- Pulse v6.92 — see CHANGELOG at end of file -->
+<!-- Pulse v6.93 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -54,10 +54,10 @@
  --purple: #9a6ae8;
  /* Chart series colors — read inside renderChart() at render time so theme
  changes redraw the chart with the correct palette without manual cache busts. */
- --c-systolic: #e8624a;
+ --c-systolic: #4a4038;
  --c-diastolic: #3a8aaa;
  --c-bpm: #3a8e58;
- --c-systolic-fill: rgba(232,98,74,0.10);
+ --c-systolic-fill: rgba(74,64,56,0.08);
  --c-diastolic-fill: rgba(58,138,170,0.10);
  --chart-grid-x: rgba(0,0,0,0.05);
  --chart-grid-y: rgba(0,0,0,0.07);
@@ -82,7 +82,8 @@
  --text3: #605a54;
  --c-diastolic: #6ab8d4;
  --c-bpm: #5db87a;
- --c-systolic-fill: rgba(232,98,74,0.12);
+ --c-systolic: #b0aaa0;
+ --c-systolic-fill: rgba(176,170,160,0.08);
  --c-diastolic-fill: rgba(106,184,212,0.07);
  --chart-grid-x: rgba(255,255,255,0.04);
  --chart-grid-y: rgba(255,255,255,0.06);
@@ -3170,19 +3171,24 @@ function computeStats(rows) {
  * → same output. */
 function buildStatsRowHtml(stats) {
  const { avgSys, avgDia, avgBpm, cat } = stats;
+ // All three cards share the same border color, tinted to the BP category of
+ // the averages so the whole row visually reflects the current status. 2px
+ // border only kicks in when there IS a category — otherwise the CSS default
+ // 1px var(--border) shows an inactive/empty look.
+ const catBorder = cat ? ` style="border: 2px solid ${cat.color};"` : '';
  return `
  <div class="stats-row">
- <div class="stat-card">
+ <div class="stat-card"${catBorder}>
  <div class="stat-label">Avg Systolic</div>
  <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-systolic)', '16 6 16 6 2 6')}
  </div>
- <div class="stat-card">
+ <div class="stat-card"${catBorder}>
  <div class="stat-label">Avg Diastolic</div>
  <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-diastolic)')}
  </div>
- <div class="stat-card">
+ <div class="stat-card"${catBorder}>
  <div class="stat-label">Avg Heart Rate</div>
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
@@ -3764,10 +3770,10 @@ function getChartColors() {
  const root = getComputedStyle(document.documentElement);
  const v = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
  return {
- systolic: v('--c-systolic', '#e8624a'),
+ systolic: v('--c-systolic', '#4a4038'),
  diastolic: v('--c-diastolic', '#3a8aaa'),
  bpm: v('--c-bpm', '#3a8e58'),
- systolicFill: v('--c-systolic-fill', 'rgba(232,98,74,0.10)'),
+ systolicFill: v('--c-systolic-fill', 'rgba(74,64,56,0.08)'),
  diastolicFill: v('--c-diastolic-fill', 'rgba(58,138,170,0.10)'),
  tickColor: v('--text3', '#9b948c'),
  gridX: v('--chart-grid-x', 'rgba(0,0,0,0.05)'),
