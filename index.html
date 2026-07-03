@@ -12,16 +12,6 @@
  // Apply saved theme BEFORE first paint to avoid a light→dark flash on dark-theme
  // sessions. The CSS-level default is LIGHT (see :root values) — this script
  // only opts INTO dark when the user has explicitly stored 'dark'.
- //
- // One-time migration: every v6.45–v6.69 load called applyTheme(loadTheme()),
- // which had a 'dark' fallback and unconditionally wrote the result to
- // localStorage. That means every existing user has 'dark' stored even if
- // they never deliberately chose it. On first v6.74+ load we wipe that
- // auto-saved value so the new light default takes effect; anyone who really
- // prefers dark just re-toggles once and it persists normally afterward.
- //
- // Literal 'pulse_theme' duplicates CONFIG.THEME_STORAGE below — kept in sync
- // by hand because CONFIG isn't defined yet at this point in load order.
  (function(){
  try {
  if (!localStorage.getItem('pulse_theme_migrated_v674')) {
