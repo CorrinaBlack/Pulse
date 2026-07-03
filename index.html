@@ -1,4 +1,4 @@
-<!-- Pulse v6.87 — see CHANGELOG at end of file -->
+<!-- Pulse v6.88 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1259,6 +1259,10 @@
  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="6.5" r="3.5"/><path d="M12 10v11"/><path d="M12 16h3"/><path d="M12 19h2"/></svg>
  <span>API Key</span>
  </button>
+ <button class="menu-item" onclick="openTagsModal();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+ <span>Manage Tags</span>
+ </button>
  <div class="menu-divider"></div>
  <button class="menu-item" onclick="openCategoriesPopover();closeMenu()">
  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="14" width="4" height="7" rx="0.5"/><rect x="10" y="9" width="4" height="12" rx="0.5"/><rect x="17" y="4" width="4" height="17" rx="0.5"/></svg>
@@ -1330,6 +1334,28 @@
  <button class="btn-sm btn-cancel" onclick="closeApiKeyModal()">Cancel</button>
  <button class="btn-sm btn-cancel" id="apiKeyClearBtn" onclick="clearApiKey()" style="display:none">Clear</button>
  <button class="btn-sm btn-commit" onclick="saveApiKey()">Save Key</button>
+ </div>
+ </div>
+</div>
+
+<!-- MANAGE TAGS MODAL — opened from the hamburger menu. Lets the user add or
+ remove tags in the picker list. Editable defaults: user can remove any
+ built-in, and can add new ones (auto-prefixed with @). Changes autosave. -->
+<div class="modal-overlay" id="tagsModal">
+ <div class="modal" style="max-width: 460px;">
+ <h3>Manage Tags</h3>
+ <p style="color: var(--text2); font-size: 13px; line-height: 1.55; margin: 0 0 14px;">These tags appear in the picker when you type <span style="font-family: 'DM Mono', monospace; color: var(--text);">@</span> in a note. Add new ones below or remove any you don't want.</p>
+ <div style="display:flex; gap:8px; margin-bottom:14px;">
+ <input type="text" id="tagsAddInput" placeholder="ExampleTag or @ExampleTag"
+ style="flex:1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Mono', monospace; font-size: 13px; padding: 8px 12px; outline: none; box-sizing: border-box;"
+ onfocus="this.style.borderColor='var(--accent)'"
+ onblur="this.style.borderColor='var(--border)'"
+ onkeydown="if(event.key==='Enter'){event.preventDefault(); addUserTag();}" />
+ <button class="btn-sm btn-commit" onclick="addUserTag()">Add</button>
+ </div>
+ <div id="tagsList" style="max-height: 320px; overflow-y: auto; padding: 4px 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm);"></div>
+ <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+ <button class="btn-sm btn-commit" onclick="closeTagsModal()">Done</button>
  </div>
  </div>
 </div>
@@ -1519,6 +1545,7 @@ const CONFIG = {
  API_KEY_STORAGE: 'pulse_anthropic_key',
  THEME_STORAGE: 'pulse_theme',
  ONBOARD_STORAGE: 'pulse_onboarded',
+ TAGS_STORAGE: 'pulse_tags',
  // Anthropic
  CLAUDE_MODEL: 'claude-opus-4-7',
  CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
@@ -1543,6 +1570,41 @@ const store = {
  del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
+// Built-in seed tags shown in the picker on first use. Users can add and
+// remove via Manage Tags in the hamburger menu; the effective list lives in
+// state.userTags (persisted to localStorage). This constant is the seed the
+// store falls back to when nothing's yet saved. Kept up here (before state)
+// so loadUserTags() can reference it during state initialization.
+const DEFAULT_TAGS = [
+ '@4ShotsCoffee', '@PostCoffee', '@PreCoffee', '@NoCoffee',
+ '@IrregularHeartBeats',
+ '@Whey', '@Collagen', '@Supplements', '@Glycine+NAC',
+ '@GoodSleep', '@PoorSleep',
+ '@Unwell', '@Nausea', '@Headache', '@Migraine',
+ '@Weights',
+ '@Walked5mi', '@Walked4mi', '@Walked3mi',
+ '@Ran1mi', '@Ran2mi', '@Ran3mi', '@Ran4mi', '@Ran5mi', '@Ran6mi',
+ '@LazyDay',
+];
+
+/** Load the user-managed tag list from localStorage. Falls back to a fresh
+ * copy of DEFAULT_TAGS on first load or if the stored value can't be parsed.
+ * Returns an array — always a fresh copy, safe to mutate. */
+function loadUserTags() {
+ const raw = store.get(CONFIG.TAGS_STORAGE);
+ if (!raw) return DEFAULT_TAGS.slice();
+ try {
+ const parsed = JSON.parse(raw);
+ if (Array.isArray(parsed)) return parsed;
+ return DEFAULT_TAGS.slice();
+ } catch { return DEFAULT_TAGS.slice(); }
+}
+
+/** Persist the current user tag list. */
+function saveUserTags() {
+ store.set(CONFIG.TAGS_STORAGE, JSON.stringify(state.userTags));
+}
+
 // Cached DOM nodes for elements that exist for the app's lifetime. Populated
 // at INIT by cacheDOM() so hot paths (popup show/hide, modal open/close, Esc
 // handlers) don't pay for repeated getElementById lookups. Dynamically-added
@@ -1557,6 +1619,7 @@ function cacheDOM() {
  dom.confirmModal = document.getElementById('confirmModal');
  dom.onboardModal = document.getElementById('onboardModal');
  dom.apiKeyModal = document.getElementById('apiKeyModal');
+ dom.tagsModal = document.getElementById('tagsModal');
  // Close edit modal on overlay click (target is the modal backdrop itself,
  // not any child). Lives here so the listener attaches after the reference
  // is captured; previously it was a top-level statement that ran before
@@ -1564,6 +1627,7 @@ function cacheDOM() {
  // entire INIT block (theme toggle, accordion default-open, photo-tab gating).
  dom.editModal.addEventListener('click', e => { if (e.target === dom.editModal) closeModal(); });
  dom.apiKeyModal.addEventListener('click', e => { if (e.target === dom.apiKeyModal) closeApiKeyModal(); });
+ dom.tagsModal.addEventListener('click', e => { if (e.target === dom.tagsModal) closeTagsModal(); });
 }
 
 function loadData() {
@@ -1617,7 +1681,12 @@ const state = {
  // rest of the session. Not persisted across reloads; a fresh page load
  // resets to the auto default (open when there's no data or OCR pending).
  entryAccordionUserToggled: false,
+ // User-managed tag list. Initialized from localStorage via loadUserTags(),
+ // which itself falls back to DEFAULT_TAGS when nothing is saved. Mutated
+ // by addUserTag / removeUserTag; each mutation calls saveUserTags().
+ userTags: [],
 };
+state.userTags = loadUserTags();
 
 
 // HTML escape helper for user-controlled text (notes, device names) — protects
@@ -1928,6 +1997,82 @@ function openApiKeyModal() {
 function closeApiKeyModal() {
  dom.apiKeyModal.classList.remove('open');
  document.getElementById('apiKeyInput').value = '';
+}
+
+// ─── MANAGE TAGS MODAL ────────────────────────────────────────────────────────
+// Add/remove entries in state.userTags via the modal launched from the
+// hamburger menu. Autosaves on every mutation via saveUserTags(). No
+// separate Save/Cancel — each add or remove takes effect immediately.
+
+function openTagsModal() {
+ renderTagsList();
+ dom.tagsModal.classList.add('open');
+ setTimeout(() => document.getElementById('tagsAddInput').focus(), 50);
+}
+
+function closeTagsModal() {
+ dom.tagsModal.classList.remove('open');
+ document.getElementById('tagsAddInput').value = '';
+}
+
+/** Render the tag list into #tagsList in alphabetical case-insensitive order.
+ * Called on modal open and after every add/remove. Renders in-place; the
+ * modal wrapper stays open throughout so scroll position within the list is
+ * preserved through short lists but resets on any structural render. */
+function renderTagsList() {
+ const host = document.getElementById('tagsList');
+ if (!host) return;
+ const sorted = state.userTags.slice().sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+ if (sorted.length === 0) {
+ host.innerHTML = '<div style="padding: 20px 12px; color: var(--text3); font-size: 13px; text-align: center;">No tags. Add one above to see it in the picker.</div>';
+ return;
+ }
+ host.innerHTML = sorted.map(tag => `
+ <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 8px; font-family:'DM Mono', monospace; font-size:13px; color: var(--text);">
+ <span>${escapeHtml(tag)}</span>
+ <button class="chart-clear-btn" onclick="removeUserTag(${JSON.stringify(tag)})" aria-label="Remove ${escapeHtml(tag)}">${_xSvg}</button>
+ </div>
+ `).join('');
+}
+
+/** Add a tag from the modal input. Auto-prefixes '@' if the user omitted it,
+ * validates against the same regex as extractTags, rejects duplicates
+ * (case-insensitive), and rejects empty / whitespace-only input. Any
+ * rejection is silent-with-toast so the user knows why nothing happened. */
+function addUserTag() {
+ const input = document.getElementById('tagsAddInput');
+ let raw = input.value.trim();
+ if (!raw) return;
+ // Auto-add @ if omitted; leaves an @-prefixed input as-is.
+ if (!raw.startsWith('@')) raw = '@' + raw;
+ // Enforce the same character set that extractTags/dedupeTags recognize —
+ // otherwise the tag would render but never match anywhere.
+ if (!/^@[A-Za-z0-9+]+$/.test(raw)) {
+ toast('Tags can only contain letters, digits, and + after the @.', 'warning');
+ return;
+ }
+ const rawLower = raw.toLowerCase();
+ if (state.userTags.some(t => t.toLowerCase() === rawLower)) {
+ toast('Tag already in the list.', 'info');
+ return;
+ }
+ state.userTags.push(raw);
+ saveUserTags();
+ input.value = '';
+ renderTagsList();
+ input.focus();
+}
+
+/** Remove a tag from state.userTags by exact string match. Persists and
+ * re-renders. Existing notes that mentioned this tag are unaffected — the
+ * tag just stops appearing in the picker; any past mentions still show as
+ * chips via the notes-rendering pass. */
+function removeUserTag(tag) {
+ const idx = state.userTags.indexOf(tag);
+ if (idx < 0) return;
+ state.userTags.splice(idx, 1);
+ saveUserTags();
+ renderTagsList();
 }
 
 // ─── CLAUDE API HELPER ────────────────────────────────────────────────────────
@@ -3083,17 +3228,9 @@ function clearSelections() {
 // The seed list below seeds the @-autocomplete; users can also type custom
 // tags that get picked up automatically next time the filter dropdown opens.
 
-const SEED_TAGS = [
- '@4ShotsCoffee', '@PostCoffee', '@PreCoffee', '@NoCoffee',
- '@IrregularHeartBeats',
- '@Whey', '@Collagen', '@Supplements', '@Glycine+NAC',
- '@GoodSleep', '@PoorSleep',
- '@Unwell', '@Nausea', '@Headache', '@Migraine',
- '@Weights',
- '@Walked5mi', '@Walked4mi', '@Walked3mi',
- '@Ran1mi', '@Ran2mi', '@Ran3mi', '@Ran4mi', '@Ran5mi', '@Ran6mi',
- '@LazyDay',
-];
+// ─── TAG SYSTEM ───────────────────────────────────────────────────────────────
+// Extract, dedupe, and render @-tags in notes. Effective tag list lives in
+// state.userTags (initialized above from localStorage via loadUserTags()).
 
 // Active tag filter (null = no filter). When set, renderData narrows the
 // table and chart to state.records whose notes contain this tag. Independent of
@@ -3132,7 +3269,7 @@ function renderNotesHtml(notes) {
 
 // All tags currently in use across state.records, deduped (case-insensitive). Each
 // entry is paired with its record count. The display name uses the casing of
-// the first record that mentioned it. SEED_TAGS that aren't yet used by any
+// the first record that mentioned it. state.userTags entries that aren't yet used by any
 // record are NOT included — the filter dropdown only shows tags the user has
 // actually applied to a reading.
 function getAvailableTagsWithCounts() {
@@ -3158,7 +3295,7 @@ const autocompleteState = {
  input: null, // current input/textarea being augmented
  atIdx: -1, // position of the @ that started this completion
  prefix: '', // text typed after @ so far
- matches: [], // current filtered list of SEED_TAGS
+ matches: [], // current filtered list of state.userTags
  selectedIdx: 0, // index in matches[]
 };
 
@@ -3178,11 +3315,15 @@ function hideTagAutocomplete() {
 
 function showTagAutocomplete(input) {
  const ac = dom.tagAutocomplete;
- // Build merged candidate list: SEED_TAGS + any custom tags already in use
+ // Build merged candidate list: user's managed tag list + any custom tags
+ // already used in notes but not in the managed list.
  const used = getAvailableTagsWithCounts().map(t => t.display);
- const seedLower = new Set(SEED_TAGS.map(t => t.toLowerCase()));
- const customs = used.filter(t => !seedLower.has(t.toLowerCase()));
- let candidates = [...SEED_TAGS, ...customs];
+ const userLower = new Set(state.userTags.map(t => t.toLowerCase()));
+ const customs = used.filter(t => !userLower.has(t.toLowerCase()));
+ let candidates = [...state.userTags, ...customs];
+ // Alphabetical case-insensitive so tag lookup is predictable regardless
+ // of when a tag was added to the managed list.
+ candidates.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
  // Hide tags already present in the current notes value — but skip the tag
  // currently being typed at autocompleteState.atIdx so the completion for it
  // still appears. Manually-typed dupes elsewhere aren't filtered by the picker;
@@ -4113,6 +4254,11 @@ const escDismissers = [
  return true;
  },
  () => {
+ if (!dom.tagsModal.classList.contains('open')) return false;
+ closeTagsModal();
+ return true;
+ },
+ () => {
  if (!dom.onboardModal.classList.contains('open')) return false;
  skipOnboarding();
  return true;
@@ -4142,6 +4288,31 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.88 — 2026-06-29 — Editable tag seed list. Users can add and remove tags in
+ the picker via a new Manage Tags modal launched from the hamburger menu.
+ • DEFAULT_TAGS (renamed from SEED_TAGS) is now just the initial-load
+ fallback. The effective list lives in state.userTags, persisted to
+ localStorage under CONFIG.TAGS_STORAGE ('pulse_tags'). Load via
+ loadUserTags() (falls back to a fresh DEFAULT_TAGS copy on first use
+ or malformed JSON); save via saveUserTags() on every mutation.
+ • Manage Tags modal (#tagsModal) — input at top with an Add button;
+ scrollable list below, alphabetical case-insensitive, each row has
+ a red ✕ to remove. Done button closes. Autosaves on every change
+ (no separate Save/Cancel needed). Wired into cacheDOM, dom cache,
+ Esc handler chain, overlay-click close.
+ • Add-tag input auto-prefixes '@' if the user omits it; validates
+ against the same regex as extractTags (letters/digits/+ only after
+ the @); rejects dupes case-insensitively with a small toast.
+ • showTagAutocomplete now uses state.userTags instead of SEED_TAGS
+ and sorts candidates alphabetically for predictable ordering.
+ Existing "custom tags used in notes but not in the managed list"
+ merge behavior preserved — a tag typed inline still auto-appears
+ in the picker without needing explicit add.
+ • Removing a tag from Manage Tags doesn't touch any past notes that
+ mentioned it — those still render with tag-chip styling via
+ renderNotesHtml(); the tag just stops appearing in the picker as
+ a suggested completion.
 
 v6.87 — 2026-06-29 — Three UX tweaks:
  • Entry accordion — once the user toggles the "Add BP Measurement"
