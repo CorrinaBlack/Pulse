@@ -1,4 +1,4 @@
-<!-- Pulse v6.95 — see CHANGELOG at end of file -->
+<!-- Pulse v6.96 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1358,7 +1358,7 @@
  style="display:none; position:absolute; right:6px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:var(--text3); cursor:pointer; padding:4px; border-radius:4px; align-items:center; justify-content:center;"
  onmouseenter="this.style.color='var(--accent)'"
  onmouseleave="this.style.color='var(--text3)'"
- onclick="clearTagInput()">${_xSvg}</button>
+ onclick="clearTagInput()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
  </div>
  <button class="btn-sm btn-commit" id="tagsPrimaryBtn" onclick="commitTagsInput()">Add</button>
  </div>
@@ -4588,6 +4588,16 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.96 — 2026-07-17 — Fix ${_xSvg} placeholder showing as literal text in the
+ Manage Tags input clear/cancel button. When I added the ✕ button inside
+ the modal's input wrapper in v6.95, I wrote its content as ${_xSvg}
+ assuming template interpolation — but that button is in RAW HTML in
+ the file, not inside a JS backtick string, so ${...} rendered as text.
+ Inlined the actual SVG markup. Cross-checked the rest of the file for
+ the same class of bug in raw HTML positions — no others found (every
+ other ${...} sits inside a template-literal render function like
+ renderTagsList / OCR queue rendering, where interpolation works).
 
 v6.95 — 2026-06-29 — Manage Tags edit mode + edit-flow auto-add bugfix +
  DEFAULT_TAGS tweak.
