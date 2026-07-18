@@ -1,4 +1,4 @@
-<!-- Pulse v6.96 — see CHANGELOG at end of file -->
+<!-- Pulse v6.97 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -57,6 +57,8 @@
  --c-systolic: #4a4038;
  --c-diastolic: #3a8aaa;
  --c-bpm: #3a8e58;
+ --c-pp: #7a6c9e;
+ --c-map: #4d8f8f;
  --c-systolic-fill: rgba(74,64,56,0.08);
  --c-diastolic-fill: rgba(58,138,170,0.10);
  --chart-grid-x: rgba(0,0,0,0.05);
@@ -83,6 +85,8 @@
  --c-diastolic: #6ab8d4;
  --c-bpm: #5db87a;
  --c-systolic: #b0aaa0;
+ --c-pp: #b09fd4;
+ --c-map: #7fb9b9;
  --c-systolic-fill: rgba(176,170,160,0.08);
  --c-diastolic-fill: rgba(106,184,212,0.07);
  --chart-grid-x: rgba(255,255,255,0.04);
@@ -685,7 +689,7 @@
  /* STATS */
  .stats-row {
  display: grid;
- grid-template-columns: 1fr 1fr 1fr;
+ grid-template-columns: repeat(5, 1fr);
  gap: 12px;
  align-items: center;
  margin-bottom: 8px;
@@ -1111,6 +1115,9 @@
  font-size: 13px;
  }
 
+ @media (max-width: 900px) {
+ .stats-row { grid-template-columns: 1fr 1fr 1fr; }
+ }
  @media (max-width: 600px) {
  .stats-row { grid-template-columns: 1fr 1fr; }
  .edit-grid { grid-template-columns: 1fr 1fr; }
@@ -3308,14 +3315,21 @@ function computeStats(rows) {
  const bpmR = rows.filter(r => r.bpm);
  const avgBpm = bpmR.length ? Math.round(bpmR.reduce((s,r) => s+r.bpm, 0) / bpmR.length) : '--';
  const cat = (typeof avgSys === 'number') ? bpCategory(avgSys, avgDia) : null;
- return { avgSys, avgDia, avgBpm, cat };
+ // Derived metrics — pulse pressure and mean arterial pressure. Both are
+ // linear functions of sys/dia so avg-then-derive == derive-then-avg; use
+ // the averages we already computed. Show '--' when no data.
+ // PP: sys − dia. Reference range: 30–50 mmHg. >60 suggests arterial stiffness.
+ // MAP: dia + (sys − dia)/3. Reference: 70–100 mmHg. Perfusion pressure.
+ const avgPP = (typeof avgSys === 'number') ? avgSys - avgDia : '--';
+ const avgMap = (typeof avgSys === 'number') ? Math.round(avgDia + (avgSys - avgDia) / 3) : '--';
+ return { avgSys, avgDia, avgBpm, avgPP, avgMap, cat };
 }
 
 /** The three stat cards + optional "● Normal" category row. Pure: same inputs
  * → same output. */
 function buildStatsRowHtml(stats) {
- const { avgSys, avgDia, avgBpm, cat } = stats;
- // All three cards share the same border color + 12% semi-transparent
+ const { avgSys, avgDia, avgBpm, avgPP, avgMap, cat } = stats;
+ // All five cards share the same border color + 12% semi-transparent
  // background tint of the BP category color, so the row visually reflects
  // the current status. color-mix keeps this working uniformly whether
  // cat.color is a CSS variable (var(--green) etc.) or a literal hex
@@ -3341,6 +3355,16 @@ function buildStatsRowHtml(stats) {
  <div class="stat-label">Avg Heart Rate</div>
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
+ </div>
+ <div class="stat-card"${catStyle}>
+ <div class="stat-label" title="Pulse Pressure (Systolic − Diastolic). Reference: 30–50 mmHg.">Avg PP</div>
+ <div class="stat-value" style="color:var(--c-pp)">${avgPP}<span> mmHg</span></div>
+ ${statPatternSvg('var(--c-pp)', '2 4')}
+ </div>
+ <div class="stat-card"${catStyle}>
+ <div class="stat-label" title="Mean Arterial Pressure (Diastolic + ⅓ × Pulse Pressure). Reference: 70–100 mmHg.">Avg MAP</div>
+ <div class="stat-value" style="color:var(--c-map)">${avgMap}<span> mmHg</span></div>
+ ${statPatternSvg('var(--c-map)', '8 4 2 4')}
  </div>
  </div>`;
 }
@@ -4588,6 +4612,31 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.97 — 2026-07-18 — Pulse pressure + MAP added as stat cards.
+ • computeStats() now returns avgPP and avgMap alongside the existing
+ avgSys/avgDia/avgBpm. Both are linear ops on sys/dia (PP = sys − dia;
+ MAP = dia + (sys − dia)/3), so computing from the already-averaged
+ numbers is mathematically identical to per-row-then-average and
+ simpler. Falls back to '--' when no data (parallel to the others).
+ • buildStatsRowHtml renders two additional stat cards after Heart
+ Rate — "Avg PP" and "Avg MAP" — sharing the same catStyle inline
+ (12% category-color tint + 1px border) as the other three for
+ uniform row appearance.
+ • New color variables --c-pp (muted purple: #7a6c9e light / #b09fd4
+ dark) and --c-map (muted teal: #4d8f8f light / #7fb9b9 dark) so
+ they visually distinguish from the sys/dia/bpm palette without
+ competing for attention.
+ • Card labels use title tooltips carrying the clinical reference
+ ranges (PP 30–50 mmHg typical; MAP 70–100 mmHg typical) so users
+ can hover on desktop to get the "what is this" affordance without
+ cluttering the visible label.
+ • Grid layout: default 5 equal columns via
+ grid-template-columns: repeat(5, 1fr). New tablet breakpoint at
+ 900px drops to 3 columns (row 1: sys/dia/bpm; row 2: PP/MAP);
+ existing 600px mobile breakpoint stays at 2 columns.
+ • statPatternSvg dash patterns distinguish PP and MAP from each other
+ and from the existing three (PP: dotted "2 4"; MAP: mixed "8 4 2 4").
 
 v6.96 — 2026-07-17 — Fix ${_xSvg} placeholder showing as literal text in the
  Manage Tags input clear/cancel button. When I added the ✕ button inside
