@@ -1,4 +1,4 @@
-<!-- Pulse v6.98 — see CHANGELOG at end of file -->
+<!-- Pulse v6.99 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1873,6 +1873,30 @@ function bpCategory(sys, dia) {
  return { label:'Normal', color:'var(--green)', range: '<120/80' };
 }
 
+/** Classify a pulse pressure value into its clinical category. Same shape
+ * as bpCategory. Thresholds match the PP Categories popover: Narrow <30,
+ * Normal 30-50, Mildly Widened 50-60, Widened 60-80, Significantly Widened >80.
+ * Boundaries at 50/60/80 belong to the LOWER band (e.g. PP=50 → Normal). */
+function ppCategory(pp) {
+ if (pp < 30) return { label: 'Narrow', color: 'var(--purple)', range: '<30' };
+ if (pp > 80) return { label: 'Significantly Widened', color: 'var(--red)', range: '>80' };
+ if (pp > 60) return { label: 'Widened', color: 'var(--orange)', range: '60\u201380' };
+ if (pp > 50) return { label: 'Mildly Widened', color: 'var(--yellow)', range: '50\u201360' };
+ return { label: 'Normal', color: 'var(--green)', range: '30\u201350' };
+}
+
+/** Classify a MAP value into its clinical category. Thresholds match the
+ * MAP Categories popover: Insufficient Perfusion <60, Low 60-70, Normal
+ * 70-100, Slightly Elevated 100-110, Elevated >110. Boundaries at
+ * 70/100/110 belong to the LOWER band (e.g. MAP=100 → Normal). */
+function mapCategory(map) {
+ if (map < 60) return { label: 'Insufficient Perfusion', color: 'var(--purple)', range: '<60' };
+ if (map < 70) return { label: 'Low', color: '#6ab8d4', range: '60\u201370' };
+ if (map > 110) return { label: 'Elevated', color: 'var(--orange)', range: '>110' };
+ if (map > 100) return { label: 'Slightly Elevated', color: 'var(--yellow)', range: '100\u2013110' };
+ return { label: 'Normal', color: 'var(--green)', range: '70\u2013100' };
+}
+
 function nowLocalISO() {
  const d = new Date();
  const off = d.getTimezoneOffset() * 60000;
@@ -3417,40 +3441,43 @@ function computeStats(rows) {
  * → same output. */
 function buildStatsRowHtml(stats) {
  const { avgSys, avgDia, avgBpm, avgPP, avgMap, cat } = stats;
- // All five cards share the same border color + 12% semi-transparent
- // background tint of the BP category color, so the row visually reflects
- // the current status. color-mix keeps this working uniformly whether
- // cat.color is a CSS variable (var(--green) etc.) or a literal hex
- // (Hypotension #6ab8d4). Only applied when there IS a category —
- // otherwise the CSS default (var(--surface2) + 1px var(--border)) shows
- // the empty/inactive state.
- const catStyle = cat
- ? ` style="background: color-mix(in srgb, ${cat.color} 12%, transparent); border-color: ${cat.color};"`
+ // Sys/Dia/BPM share the BP-category tint (based on avgSys + avgDia). PP and
+ // MAP get their OWN category-driven tints via ppCategory / mapCategory so
+ // the popover reference bands become glanceable status on the card itself.
+ // When there's no data (typeof avg === 'string'), catStyle stays '' and the
+ // CSS default (var(--surface2) + 1px var(--border)) shows the inactive look.
+ const tintFor = c => c
+ ? ` style="background: color-mix(in srgb, ${c.color} 12%, transparent); border-color: ${c.color};"`
  : '';
+ const bpStyle = tintFor(cat);
+ const ppCat = typeof avgPP === 'number' ? ppCategory(avgPP) : null;
+ const mapCat = typeof avgMap === 'number' ? mapCategory(avgMap) : null;
+ const ppStyle = tintFor(ppCat);
+ const mapStyle = tintFor(mapCat);
  return `
  <div class="stats-row">
- <div class="stat-card"${catStyle}>
+ <div class="stat-card"${bpStyle}>
  <div class="stat-label">Avg Systolic</div>
  <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-systolic)', '16 6 16 6 2 6')}
  </div>
- <div class="stat-card"${catStyle}>
+ <div class="stat-card"${bpStyle}>
  <div class="stat-label">Avg Diastolic</div>
  <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-diastolic)')}
  </div>
- <div class="stat-card"${catStyle}>
+ <div class="stat-card"${bpStyle}>
  <div class="stat-label">Avg Heart Rate</div>
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
- <div class="stat-card"${catStyle}>
- <div class="stat-label" title="Pulse Pressure (Systolic − Diastolic). Reference: 30–50 mmHg.">Avg PP</div>
+ <div class="stat-card"${ppStyle}>
+ <div class="stat-label" title="Pulse Pressure (Systolic − Diastolic)${ppCat ? ' · ' + ppCat.label + ' (' + ppCat.range + ')' : ''}">Avg PP</div>
  <div class="stat-value" style="color:var(--c-pp)">${avgPP}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-pp)', '2 4')}
  </div>
- <div class="stat-card"${catStyle}>
- <div class="stat-label" title="Mean Arterial Pressure (Diastolic + ⅓ × Pulse Pressure). Reference: 70–100 mmHg.">Avg MAP</div>
+ <div class="stat-card"${mapStyle}>
+ <div class="stat-label" title="Mean Arterial Pressure (Diastolic + ⅓ × Pulse Pressure)${mapCat ? ' · ' + mapCat.label + ' (' + mapCat.range + ')' : ''}">Avg MAP</div>
  <div class="stat-value" style="color:var(--c-map)">${avgMap}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-map)', '8 4 2 4')}
  </div>
@@ -4700,6 +4727,29 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.99 — 2026-07-18 — PP + MAP stat cards now use their own category tints
+ (matching the popovers built in v6.98), decoupled from the BP-category
+ tint on sys/dia/bpm.
+ • New ppCategory(pp) — thresholds match the PP Categories popover:
+ Narrow <30 (purple), Normal 30–50 (green), Mildly Widened 50–60
+ (yellow), Widened 60–80 (orange), Significantly Widened >80 (red).
+ Boundaries at 50/60/80 belong to the lower band.
+ • New mapCategory(map) — thresholds match the MAP popover:
+ Insufficient Perfusion <60 (purple), Low 60–70 (cyan), Normal
+ 70–100 (green), Slightly Elevated 100–110 (yellow), Elevated
+ >110 (orange). Boundaries at 70/100/110 belong to the lower band.
+ • buildStatsRowHtml refactored: extracted a tintFor(cat) helper so
+ the same color-mix + border-color pattern is applied consistently.
+ Sys/Dia/BPM cards keep sharing the bpCategory tint (BP status of
+ avg sys/dia). PP and MAP cards each apply their own category tint.
+ • Title tooltips on PP and MAP labels now include the current category
+ label + range (e.g. "…· Normal (30–50)"). Hovering shows both what
+ the metric is AND what band the current average falls into.
+ • Practical effect: PP and MAP normally read green when in-range;
+ they only diverge from BP category color when the derived metric
+ drifts into a non-Normal band. This makes v6.98's popovers
+ actionable rather than reference-only.
 
 v6.98 — 2026-07-18 — PP + MAP category reference popovers in the hamburger.
  Two new menu items (PP Categories, MAP Categories) parallel to the
