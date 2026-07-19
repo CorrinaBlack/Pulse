@@ -1,4 +1,4 @@
-<!-- Pulse v6.97 — see CHANGELOG at end of file -->
+<!-- Pulse v6.98 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1276,6 +1276,14 @@
  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="14" width="4" height="7" rx="0.5"/><rect x="10" y="9" width="4" height="12" rx="0.5"/><rect x="17" y="4" width="4" height="17" rx="0.5"/></svg>
  <span>BP Categories</span>
  </button>
+ <button class="menu-item" onclick="openPPCategoriesPopover();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8v8"/><path d="M18 8v8"/><path d="M6 12h12"/><polyline points="9 9 6 12 9 15"/><polyline points="15 9 18 12 15 15"/></svg>
+ <span>PP Categories</span>
+ </button>
+ <button class="menu-item" onclick="openMAPCategoriesPopover();closeMenu()">
+ <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h18"/><circle cx="12" cy="12" r="3"/></svg>
+ <span>MAP Categories</span>
+ </button>
  <div class="menu-divider"></div>
  <button class="menu-item" onclick="exportCSV();closeMenu()">
  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17V5"/><path d="M7 10l5-5 5 5"/><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
@@ -1318,6 +1326,58 @@
  <div class="cat-card cat-crisis">
  <div class="cat-name" style="color:var(--purple)">Hypertensive Crisis</div>
  <div class="cat-range">180+ / 120+ mmHg</div>
+ </div>
+ </div>
+ </div>
+ <!-- PULSE PRESSURE CATEGORIES POPOVER -->
+ <div class="menu-popover" id="ppCategoriesPopover" role="dialog" aria-label="Pulse Pressure Categories">
+ <div class="menu-popover-title">Pulse Pressure (Sys − Dia)</div>
+ <div class="cat-grid" style="grid-template-columns:1fr;gap:8px">
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--purple)">Narrow</div>
+ <div class="cat-range">Below 30 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--green)">Normal</div>
+ <div class="cat-range">30–50 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--yellow)">Mildly Widened</div>
+ <div class="cat-range">50–60 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--orange)">Widened</div>
+ <div class="cat-range">60–80 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--red)">Significantly Widened</div>
+ <div class="cat-range">Above 80 mmHg</div>
+ </div>
+ </div>
+ </div>
+ <!-- MAP CATEGORIES POPOVER -->
+ <div class="menu-popover" id="mapCategoriesPopover" role="dialog" aria-label="MAP Categories">
+ <div class="menu-popover-title">Mean Arterial Pressure</div>
+ <div class="cat-grid" style="grid-template-columns:1fr;gap:8px">
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--purple)">Insufficient Perfusion</div>
+ <div class="cat-range">Below 60 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:#6ab8d4">Low</div>
+ <div class="cat-range">60–70 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--green)">Normal</div>
+ <div class="cat-range">70–100 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--yellow)">Slightly Elevated</div>
+ <div class="cat-range">100–110 mmHg</div>
+ </div>
+ <div class="cat-card">
+ <div class="cat-name" style="color:var(--orange)">Elevated</div>
+ <div class="cat-range">Above 110 mmHg</div>
  </div>
  </div>
  </div>
@@ -1912,6 +1972,7 @@ function closeMenu() {
 }
 
 function openCategoriesPopover() {
+ closeAllCategoryPopovers();
  document.getElementById('categoriesPopover').classList.add('open');
 }
 
@@ -1919,12 +1980,39 @@ function closeCategoriesPopover() {
  document.getElementById('categoriesPopover').classList.remove('open');
 }
 
-// Close hamburger / popover when clicking outside the hamburger area
+function openPPCategoriesPopover() {
+ closeAllCategoryPopovers();
+ document.getElementById('ppCategoriesPopover').classList.add('open');
+}
+
+function closePPCategoriesPopover() {
+ document.getElementById('ppCategoriesPopover').classList.remove('open');
+}
+
+function openMAPCategoriesPopover() {
+ closeAllCategoryPopovers();
+ document.getElementById('mapCategoriesPopover').classList.add('open');
+}
+
+function closeMAPCategoriesPopover() {
+ document.getElementById('mapCategoriesPopover').classList.remove('open');
+}
+
+/** Close whichever category popover is currently open. Called by any of the
+ * open* helpers so opening one closes the others (only one at a time), and
+ * by the outside-click handler + Esc handler. */
+function closeAllCategoryPopovers() {
+ closeCategoriesPopover();
+ closePPCategoriesPopover();
+ closeMAPCategoriesPopover();
+}
+
+// Close hamburger / popovers when clicking outside the hamburger area
 document.addEventListener('click', (e) => {
  const wrap = document.querySelector('.hamburger-wrap');
  if (wrap && !wrap.contains(e.target)) {
  closeMenu();
- closeCategoriesPopover();
+ closeAllCategoryPopovers();
  }
 });
 
@@ -4612,6 +4700,27 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v6.98 — 2026-07-18 — PP + MAP category reference popovers in the hamburger.
+ Two new menu items (PP Categories, MAP Categories) parallel to the
+ existing BP Categories entry. Each opens its own popover with the
+ same visual pattern (colored category name + range in mono).
+ • PP CATEGORIES: Narrow <30 (purple), Normal 30–50 (green), Mildly
+ Widened 50–60 (yellow), Widened 60–80 (orange), Significantly
+ Widened >80 (red). Merged the earlier "ideal 30–40 / normal 40–50"
+ split into a single green Normal band for cleaner visual reading.
+ • MAP CATEGORIES: Insufficient Perfusion <60 (purple), Low 60–70
+ (cyan matching Hypotension), Normal 70–100 (green), Slightly
+ Elevated 100–110 (yellow), Elevated >110 (orange).
+ • Behavior: opening any of the three category popovers now closes the
+ other two (only one open at a time) via a new closeAllCategoryPopovers()
+ helper. Click-outside handler updated to close all three. Existing
+ BP popover UX unchanged.
+ • Icons: PP uses a horizontal double-arrow (range indicator); MAP
+ uses a horizontal line with a centered dot (mean symbol).
+ • No changes to bpCategory() or the stat cards — this is purely a
+ reference lookup for the user; the app doesn't currently categorize
+ individual readings by PP or MAP.
 
 v6.97 — 2026-07-18 — Pulse pressure + MAP added as stat cards.
  • computeStats() now returns avgPP and avgMap alongside the existing
