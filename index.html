@@ -1,4 +1,4 @@
-<!-- Pulse v6.99 — see CHANGELOG at end of file -->
+<!-- Pulse v7.00 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -315,6 +315,15 @@
  }
  .cat-card .cat-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
  .cat-card .cat-range { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text2); }
+ /* Active band highlight — used when a category popover is opened FROM a
+ stat card (PP or MAP). Signals which row your current average falls into.
+ Uses the app's accent color as a neutral "you are here" marker rather
+ than the band's own color, so the highlight stays visible even for
+ subtle bands (green normal, etc.). */
+ .cat-card.cat-card-active {
+ box-shadow: inset 0 0 0 2px var(--accent);
+ background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+ }
  .cat-normal { border-color: var(--green); background: rgba(93,184,122,0.08); }
  .cat-elevated { border-color: var(--yellow); background: rgba(232,196,74,0.08); }
  .cat-high1 { border-color: var(--orange); background: rgba(232,146,74,0.08); }
@@ -2004,22 +2013,45 @@ function closeCategoriesPopover() {
  document.getElementById('categoriesPopover').classList.remove('open');
 }
 
-function openPPCategoriesPopover() {
+/** Open the PP Categories popover. If `activeBand` is passed (label like
+ * 'Normal', 'Widened', etc.), the matching row is highlighted so the user
+ * can see at a glance which band their current PP average falls into. */
+function openPPCategoriesPopover(activeBand) {
  closeAllCategoryPopovers();
- document.getElementById('ppCategoriesPopover').classList.add('open');
+ const popover = document.getElementById('ppCategoriesPopover');
+ highlightBand(popover, activeBand);
+ popover.classList.add('open');
 }
 
 function closePPCategoriesPopover() {
  document.getElementById('ppCategoriesPopover').classList.remove('open');
 }
 
-function openMAPCategoriesPopover() {
+/** Open the MAP Categories popover, optionally highlighting the current band. */
+function openMAPCategoriesPopover(activeBand) {
  closeAllCategoryPopovers();
- document.getElementById('mapCategoriesPopover').classList.add('open');
+ const popover = document.getElementById('mapCategoriesPopover');
+ highlightBand(popover, activeBand);
+ popover.classList.add('open');
 }
 
 function closeMAPCategoriesPopover() {
  document.getElementById('mapCategoriesPopover').classList.remove('open');
+}
+
+/** Toggle the .cat-card-active class on the row inside `popover` whose
+ * .cat-name text matches `label` (case-insensitive). Clears the class
+ * from all rows first so no stale highlight persists between opens. */
+function highlightBand(popover, label) {
+ popover.querySelectorAll('.cat-card').forEach(card => card.classList.remove('cat-card-active'));
+ if (!label) return;
+ const target = label.trim().toLowerCase();
+ popover.querySelectorAll('.cat-card').forEach(card => {
+ const name = card.querySelector('.cat-name');
+ if (name && name.textContent.trim().toLowerCase() === target) {
+ card.classList.add('cat-card-active');
+ }
+ });
 }
 
 /** Close whichever category popover is currently open. Called by any of the
@@ -3444,40 +3476,43 @@ function buildStatsRowHtml(stats) {
  // Sys/Dia/BPM share the BP-category tint (based on avgSys + avgDia). PP and
  // MAP get their OWN category-driven tints via ppCategory / mapCategory so
  // the popover reference bands become glanceable status on the card itself.
- // When there's no data (typeof avg === 'string'), catStyle stays '' and the
- // CSS default (var(--surface2) + 1px var(--border)) shows the inactive look.
+ // tintFor returns raw CSS text (no `style="..."` wrapper) so callers can
+ // combine it with other declarations (e.g. cursor:pointer on the tappable
+ // PP/MAP cards) in a single style attribute.
  const tintFor = c => c
- ? ` style="background: color-mix(in srgb, ${c.color} 12%, transparent); border-color: ${c.color};"`
+ ? `background: color-mix(in srgb, ${c.color} 12%, transparent); border-color: ${c.color};`
  : '';
- const bpStyle = tintFor(cat);
+ const bpTint = tintFor(cat);
  const ppCat = typeof avgPP === 'number' ? ppCategory(avgPP) : null;
  const mapCat = typeof avgMap === 'number' ? mapCategory(avgMap) : null;
- const ppStyle = tintFor(ppCat);
- const mapStyle = tintFor(mapCat);
+ const ppTint = tintFor(ppCat);
+ const mapTint = tintFor(mapCat);
+ // Small helper: wrap CSS text in a style attribute if non-empty
+ const styleAttr = css => css ? ` style="${css}"` : '';
  return `
  <div class="stats-row">
- <div class="stat-card"${bpStyle}>
+ <div class="stat-card"${styleAttr(bpTint)}>
  <div class="stat-label">Avg Systolic</div>
  <div class="stat-value" style="color:var(--c-systolic)">${avgSys}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-systolic)', '16 6 16 6 2 6')}
  </div>
- <div class="stat-card"${bpStyle}>
+ <div class="stat-card"${styleAttr(bpTint)}>
  <div class="stat-label">Avg Diastolic</div>
  <div class="stat-value" style="color:var(--c-diastolic)">${avgDia}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-diastolic)')}
  </div>
- <div class="stat-card"${bpStyle}>
+ <div class="stat-card"${styleAttr(bpTint)}>
  <div class="stat-label">Avg Heart Rate</div>
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
- <div class="stat-card"${ppStyle}>
- <div class="stat-label" title="Pulse Pressure (Systolic − Diastolic)${ppCat ? ' · ' + ppCat.label + ' (' + ppCat.range + ')' : ''}">Avg PP</div>
+ <div class="stat-card" style="cursor:pointer;${ppTint}" onclick="event.stopPropagation(); openPPCategoriesPopover(${ppCat ? JSON.stringify(ppCat.label) : 'null'})">
+ <div class="stat-label">Avg PP</div>
  <div class="stat-value" style="color:var(--c-pp)">${avgPP}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-pp)', '2 4')}
  </div>
- <div class="stat-card"${mapStyle}>
- <div class="stat-label" title="Mean Arterial Pressure (Diastolic + ⅓ × Pulse Pressure)${mapCat ? ' · ' + mapCat.label + ' (' + mapCat.range + ')' : ''}">Avg MAP</div>
+ <div class="stat-card" style="cursor:pointer;${mapTint}" onclick="event.stopPropagation(); openMAPCategoriesPopover(${mapCat ? JSON.stringify(mapCat.label) : 'null'})">
+ <div class="stat-label">Avg MAP</div>
  <div class="stat-value" style="color:var(--c-map)">${avgMap}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-map)', '8 4 2 4')}
  </div>
@@ -4727,6 +4762,33 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v7.00 — 2026-07-18 — Tap PP or MAP stat card → opens its category popover
+ with the current band highlighted. Replaces v6.99's `title` tooltips
+ which iOS Safari silently ignores (title tooltips are a mouse-hover-
+ only feature and never fire on touch).
+ • PP + MAP stat cards get onclick handlers that call
+ openPPCategoriesPopover(currentBandLabel) or the MAP equivalent.
+ event.stopPropagation() prevents the document-level outside-click
+ handler from immediately closing the popover we just opened.
+ • Open functions now accept an optional activeBand parameter and
+ delegate to a new highlightBand(popover, label) helper that finds
+ the matching .cat-card row by label text (case-insensitive) and
+ adds .cat-card-active. Class is cleared from all rows at the start
+ of each open so no stale highlight persists between opens.
+ • .cat-card-active CSS — inset 2px accent-color ring + 8%
+ accent-tinted background. Uses the app's accent (not the band's
+ own color) as a neutral "you are here" marker so the highlight
+ stays visible even for subtle bands (green Normal, etc.).
+ • Sys/Dia/BPM cards remain non-tappable; only PP/MAP get the
+ cursor:pointer + click behavior since they're the ones with a
+ dedicated popover to open.
+ • Refactor: tintFor(cat) now returns raw CSS text (not the whole
+ style attribute) so PP/MAP cards can merge cursor:pointer with
+ the category tint into a single style attribute. Fixed a bug in
+ the earlier iteration where two style="" attributes ended up on
+ the same element with non-deterministic browser behavior.
+ • Removed the (broken) title="" tooltips from the labels.
 
 v6.99 — 2026-07-18 — PP + MAP stat cards now use their own category tints
  (matching the popovers built in v6.98), decoupled from the BP-category
