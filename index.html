@@ -1,4 +1,4 @@
-<!-- Pulse v7.01 — see CHANGELOG at end of file -->
+<!-- Pulse v7.02 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3506,12 +3506,12 @@ function buildStatsRowHtml(stats) {
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
- <div class="stat-card" style="cursor:pointer;${ppTint}" onclick='event.stopPropagation(); openPPCategoriesPopover(${ppCat ? JSON.stringify(ppCat.label) : "null"})'>
+ <div class="stat-card" style="cursor:pointer;${ppTint}" onclick="showMetricInfoPopup(event, 'pp')">
  <div class="stat-label">Avg PP</div>
  <div class="stat-value" style="color:var(--c-pp)">${avgPP}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-pp)', '2 4')}
  </div>
- <div class="stat-card" style="cursor:pointer;${mapTint}" onclick='event.stopPropagation(); openMAPCategoriesPopover(${mapCat ? JSON.stringify(mapCat.label) : "null"})'>
+ <div class="stat-card" style="cursor:pointer;${mapTint}" onclick="showMetricInfoPopup(event, 'map')">
  <div class="stat-label">Avg MAP</div>
  <div class="stat-value" style="color:var(--c-map)">${avgMap}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-map)', '8 4 2 4')}
@@ -4072,6 +4072,61 @@ function showNotePopup(event, recordId) {
  tooltip.innerHTML = `
  <div class="tt-meta" style="margin-bottom:6px">Note</div>
  <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;max-width:320px">${renderNotesHtml(r.notes||'')}</div>
+ `;
+ tooltip.style.display = 'block';
+ const ttRect = tooltip.getBoundingClientRect();
+ let x = event.clientX + 14;
+ let y = event.clientY + 10;
+ if (x + ttRect.width > window.innerWidth - 8) x = event.clientX - ttRect.width - 14;
+ if (x < 8) x = 8;
+ if (y + ttRect.height > window.innerHeight - 8) y = event.clientY - ttRect.height - 10;
+ if (y < 8) y = 8;
+ tooltip.style.left = x + 'px';
+ tooltip.style.top = y + 'px';
+ scheduleTooltipDismiss();
+}
+
+/** Lightweight PP / MAP info popup — opened by tapping the corresponding
+ * stat card. Reuses the existing #chartTooltip element and dismissal
+ * pattern (same as showNotePopup). Content is a compact "what / how / why"
+ * explainer plus the current average and its band. Deliberately shorter
+ * than the full Categories popovers in the hamburger menu, which stay
+ * available for anyone who wants the complete reference table. */
+function showMetricInfoPopup(event, kind) {
+ event.stopPropagation();
+ const tooltip = dom.chartTooltip;
+ // Recompute current avg + band from the currently-visible data so the
+ // popup always shows the numbers the user is looking at, even after
+ // filters. currentSortedRecords is what renderData just rendered.
+ const rows = state.currentSortedRecords.length ? state.currentSortedRecords : state.records;
+ const stats = computeStats(rows);
+ let title, formula, why, currentVal, band;
+ if (kind === 'pp') {
+ title = 'Pulse Pressure';
+ formula = 'Systolic − Diastolic';
+ why = 'Reflects arterial compliance — how well large arteries absorb each heartbeat. Widens when arteries stiffen; narrows when stroke volume drops.';
+ currentVal = stats.avgPP;
+ band = typeof currentVal === 'number' ? ppCategory(currentVal) : null;
+ } else {
+ title = 'Mean Arterial Pressure';
+ formula = 'Diastolic + ⅓ × (Systolic − Diastolic)';
+ why = 'The average pressure driving blood into organs across the whole cardiac cycle. The perfusion pressure your kidneys, brain, and heart muscle actually feel.';
+ currentVal = stats.avgMap;
+ band = typeof currentVal === 'number' ? mapCategory(currentVal) : null;
+ }
+ const bandLine = band
+ ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text2)">
+ Your average: <strong style="color:${band.color}">${currentVal} mmHg — ${band.label}</strong> (${band.range})
+ </div>`
+ : '';
+ tooltip.innerHTML = `
+ <div class="tt-meta" style="margin-bottom:6px">${title}</div>
+ <div style="font-size:13px;color:var(--text);line-height:1.5;max-width:300px">
+ <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text2);margin-bottom:8px">= ${formula}</div>
+ <div>${why}</div>
+ ${bandLine}
+ </div>
+ <div style="margin-top:8px;font-size:11px;color:var(--text3);font-style:italic">Tap outside to close · full reference in the menu</div>
  `;
  tooltip.style.display = 'block';
  const ttRect = tooltip.getBoundingClientRect();
@@ -4762,6 +4817,36 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v7.02 — 2026-07-18 — Tap PP or MAP card now opens a lightweight info popup
+ (styled like the notes popup in the data table) instead of the full
+ Categories popover. The full popovers stay accessible from the
+ hamburger menu for anyone wanting the complete reference table —
+ they're just not the card-tap target anymore.
+ • New showMetricInfoPopup(event, kind) — reuses the existing
+ #chartTooltip element and dismissal pattern that showNotePopup
+ already uses. Compact "what / how / why" content plus the current
+ average and its band. Positioned near the tap point, not
+ anchored to the hamburger area.
+ • Content structure:
+ - Title: metric name
+ - Formula: how it's derived, mono font, muted
+ - Why: 1–2 sentence clinical interpretation
+ - Divider + current-value line: avg + band label + range,
+ colored by the band's category color
+ - Footer hint: "full reference in the menu"
+ • Onclick handlers on the two cards are now dead simple:
+ onclick="showMetricInfoPopup(event, 'pp')" — no JSON.stringify,
+ no template interpolation, no quote juggling. Bonus: this class
+ of bug can't happen at all in these handlers now.
+ • Recomputes stats live inside the popup from currentSortedRecords
+ so the shown avg + band always match what the chart is displaying,
+ even after tag / row-selection filters. If somehow no data is
+ available, the band line drops out gracefully — just what/how/why.
+ • Hamburger menu paths (openPPCategoriesPopover / openMAPCategoriesPopover
+ without args) unchanged — they still open the full reference popover
+ as before. The activeBand parameter added in v7.00 stays available
+ but goes unused now that no caller passes it.
 
 v7.01 — 2026-07-18 — Fix broken PP/MAP card taps — same class of bug as
  v6.95's Manage Tags delete button. The onclick attributes used
