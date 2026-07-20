@@ -1,4 +1,4 @@
-<!-- Pulse v7.02 — see CHANGELOG at end of file -->
+<!-- Pulse v7.03 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4126,7 +4126,7 @@ function showMetricInfoPopup(event, kind) {
  <div>${why}</div>
  ${bandLine}
  </div>
- <div style="margin-top:8px;font-size:11px;color:var(--text3);font-style:italic">Tap outside to close · full reference in the menu</div>
+ <div style="margin-top:8px;font-size:11px;color:var(--text3);font-style:italic">Full reference is found in the top right hamburger menu</div>
  `;
  tooltip.style.display = 'block';
  const ttRect = tooltip.getBoundingClientRect();
@@ -4817,6 +4817,12 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v7.03 — 2026-07-18 — Reworded the footer in the PP/MAP info popups:
+ "Tap outside to close · full reference in the menu" →
+ "Full reference is found in the top right hamburger menu"
+ More specific about WHERE the full reference lives. Dropped the
+ dismissal hint since the tap-outside behavior is standard.
 
 v7.02 — 2026-07-18 — Tap PP or MAP card now opens a lightweight info popup
  (styled like the notes popup in the data table) instead of the full
