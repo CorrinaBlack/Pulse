@@ -1,4 +1,4 @@
-<!-- Pulse v7.00 — see CHANGELOG at end of file -->
+<!-- Pulse v7.01 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3506,12 +3506,12 @@ function buildStatsRowHtml(stats) {
  <div class="stat-value" style="color:var(--c-bpm)">${avgBpm}<span> bpm</span></div>
  ${statPatternSvg('var(--c-bpm)', '4 4')}
  </div>
- <div class="stat-card" style="cursor:pointer;${ppTint}" onclick="event.stopPropagation(); openPPCategoriesPopover(${ppCat ? JSON.stringify(ppCat.label) : 'null'})">
+ <div class="stat-card" style="cursor:pointer;${ppTint}" onclick='event.stopPropagation(); openPPCategoriesPopover(${ppCat ? JSON.stringify(ppCat.label) : "null"})'>
  <div class="stat-label">Avg PP</div>
  <div class="stat-value" style="color:var(--c-pp)">${avgPP}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-pp)', '2 4')}
  </div>
- <div class="stat-card" style="cursor:pointer;${mapTint}" onclick="event.stopPropagation(); openMAPCategoriesPopover(${mapCat ? JSON.stringify(mapCat.label) : 'null'})">
+ <div class="stat-card" style="cursor:pointer;${mapTint}" onclick='event.stopPropagation(); openMAPCategoriesPopover(${mapCat ? JSON.stringify(mapCat.label) : "null"})'>
  <div class="stat-label">Avg MAP</div>
  <div class="stat-value" style="color:var(--c-map)">${avgMap}<span> mmHg</span></div>
  ${statPatternSvg('var(--c-map)', '8 4 2 4')}
@@ -4762,6 +4762,20 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v7.01 — 2026-07-18 — Fix broken PP/MAP card taps — same class of bug as
+ v6.95's Manage Tags delete button. The onclick attributes used
+ `onclick="... openPPCategoriesPopover(${JSON.stringify(label)})"`.
+ JSON.stringify produces a double-quoted string ("Normal"), which
+ prematurely terminates the double-quoted outer attribute, breaking
+ the whole handler. Fix: swap outer to single quotes so the inner
+ double quotes are safe.
+ Also swept the codebase for the same pattern; all 4 remaining uses
+ of JSON.stringify inside onclick are now correctly single-quoted.
+ Lesson filed (again): mixing string quotes in HTML attributes is
+ a recurring failure mode — either use single-quoted attributes when
+ the value contains JSON, or use data attributes + event delegation
+ to avoid inline serialization entirely.
 
 v7.00 — 2026-07-18 — Tap PP or MAP stat card → opens its category popover
  with the current band highlighted. Replaces v6.99's `title` tooltips
