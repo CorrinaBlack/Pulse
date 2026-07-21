@@ -1,4 +1,4 @@
-<!-- Pulse v7.03 — see CHANGELOG at end of file -->
+<!-- Pulse v7.04 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3704,6 +3704,28 @@ function extractTags(notes) {
  return matches || [];
 }
 
+/** Build a per-day sleep-tag map from a set of records. Key is the local
+ * calendar date (YYYY-MM-DD, from dt.slice(0,10) since dt is stored as local
+ * ISO). Value is {good, poor} — either flag flips true if ANY reading on
+ * that day carries the corresponding tag. Used by the sleep overlay chart
+ * plugin to draw markers under readings from tagged days. */
+function getSleepMarkersByDay(points) {
+ const map = new Map();
+ points.forEach(p => {
+ const day = (p.dt || '').slice(0, 10);
+ if (!day) return;
+ const tags = extractTags(p.notes || '').map(t => t.toLowerCase());
+ const hasGood = tags.includes('@goodsleep');
+ const hasPoor = tags.includes('@poorsleep');
+ if (!hasGood && !hasPoor) return;
+ if (!map.has(day)) map.set(day, { good: false, poor: false });
+ const entry = map.get(day);
+ if (hasGood) entry.good = true;
+ if (hasPoor) entry.poor = true;
+ });
+ return map;
+}
+
 /** Drop duplicate @-tags from a notes string. Keeps the first occurrence
  * (case-insensitive) and removes subsequent instances along with their
  * trailing whitespace so no gap is left behind. Preserves all non-tag text. */
@@ -4157,6 +4179,10 @@ function getChartColors() {
  gridX: v('--chart-grid-x', 'rgba(0,0,0,0.05)'),
  gridY: v('--chart-grid-y', 'rgba(0,0,0,0.07)'),
  bg: v('--bg', '#faf7f2'),
+ // Sleep overlay colors — green for @GoodSleep days, orange for @PoorSleep.
+ // Both are theme-aware via CSS variables that already exist elsewhere.
+ sleepGood: v('--c-bpm', '#3a8e58'),
+ sleepPoor: v('--orange', '#d18a3a'),
  };
 }
 
@@ -4203,6 +4229,48 @@ function recommendedMaxLinesPlugin(C) {
  };
  drawLine(120, sysLineColor);
  drawLine(80, diaLineColor);
+ ctx.restore();
+ },
+ };
+}
+
+/** Sleep overlay: for each point on the chart, if its DAY (local calendar
+ * date) carries @GoodSleep or @PoorSleep in any note, draw a small colored
+ * bar at the bottom of the plot area under that point. Green (--c-bpm) for
+ * @GoodSleep, orange (--orange) for @PoorSleep. Days with BOTH tags render
+ * both bars stacked vertically (poor at bottom, good above it) so the
+ * conflicting signal is visible rather than hidden. Untagged days show
+ * nothing. Bars use fixed pixel dimensions (3w × 5h) rather than data-space
+ * units so they stay a consistent visual weight regardless of zoom/density. */
+function sleepOverlayPlugin(points, sleepMap, C) {
+ return {
+ id: 'sleepOverlay',
+ afterDatasetsDraw(chart) {
+ if (!sleepMap.size) return;
+ const { ctx, chartArea, scales } = chart;
+ const xScale = scales.x;
+ if (!xScale) return;
+ const barW = 3;
+ const barH = 5;
+ const gap = 1;
+ const bottomInset = 3; // px above chartArea.bottom
+ ctx.save();
+ points.forEach((p, i) => {
+ const day = (p.dt || '').slice(0, 10);
+ const entry = sleepMap.get(day);
+ if (!entry) return;
+ const xPx = xScale.getPixelForValue(i);
+ let yTop = chartArea.bottom - bottomInset - barH;
+ if (entry.poor) {
+ ctx.fillStyle = C.sleepPoor;
+ ctx.fillRect(xPx - barW / 2, yTop, barW, barH);
+ yTop -= barH + gap;
+ }
+ if (entry.good) {
+ ctx.fillStyle = C.sleepGood;
+ ctx.fillRect(xPx - barW / 2, yTop, barW, barH);
+ }
+ });
  ctx.restore();
  },
  };
@@ -4383,7 +4451,7 @@ function renderChart(series) {
  showChartPointPopup(points[pts[0].index], evt);
  },
  },
- plugins: [recommendedMaxLinesPlugin(C)],
+ plugins: [recommendedMaxLinesPlugin(C), sleepOverlayPlugin(points, getSleepMarkersByDay(points), C)],
  });
 
  populateYAxisLabels(state.chartInstance.scales.y, C);
@@ -4817,6 +4885,39 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v7.04 — 2026-07-18 — Sleep-quality overlay on the chart. Small colored bars
+ appear at the bottom of the plot area under readings from days tagged
+ @GoodSleep (green) or @PoorSleep (orange). Days with BOTH tags show
+ both bars stacked (poor at bottom, good above); untagged days show
+ nothing. Turns the strongest actionable signal in the data
+ (Δ diastolic 5.3 mmHg between good/poor sleep, p=0.001) into a
+ daily glanceable prompt.
+ • New getSleepMarkersByDay(points) — walks the records once, groups
+ by local calendar date (dt.slice(0,10)), and returns a Map<day,
+ {good, poor}>. Either flag flips true if ANY reading on that day
+ has the corresponding tag. Case-insensitive tag match. Untagged
+ days are absent from the map (not stored as {false, false}) so
+ the plugin can skip them with a single .has() check.
+ • New sleepOverlayPlugin(points, sleepMap, C) — Chart.js plugin
+ following the same afterDatasetsDraw pattern as the existing
+ recommendedMaxLinesPlugin. Draws 3×5 px fillRects positioned at
+ xScale.getPixelForValue(pointIndex) at the bottom of the plot
+ area (chartArea.bottom − 8 px inset). Fixed pixel dimensions so
+ the bars stay a consistent visual weight regardless of point
+ density.
+ • Colors read from getChartColors: sleepGood uses --c-bpm (green
+ already in the palette), sleepPoor uses --orange. Both are
+ theme-aware and align with existing category colors so no new
+ palette entries needed.
+ • Wired in via the chart's `plugins` array alongside the
+ recommendedMaxLines plugin. No render/state changes needed;
+ the plugin computes its sleepMap from the same points that
+ already drive the datasets.
+ • Behavior: always on (no toggle). Sleep tags are opt-in and
+ infrequent, so the overlay stays quiet on days without them.
+ If future data density warrants it, adding a toggle is a
+ one-liner in the chart-controls row.
 
 v7.03 — 2026-07-18 — Reworded the footer in the PP/MAP info popups:
  "Tap outside to close · full reference in the menu" →
