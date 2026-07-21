@@ -1,4 +1,4 @@
-<!-- Pulse v7.04 — see CHANGELOG at end of file -->
+<!-- Pulse v7.05 — see CHANGELOG at end of file -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -787,7 +787,7 @@
  font-size: 12px;
  color: var(--text2);
  width: 240px;
- text-align: right;
+ text-align: left;
  z-index: 10;
  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
  line-height: 1.5;
@@ -3542,7 +3542,7 @@ function buildChartControlsHtml(selectionCount, tagFilter, cat) {
  </div>` : ''}
  <div class="chart-info-wrap">
  <button class="chart-info-btn" onclick="toggleChartHint(event)" aria-label="How to filter the chart">${_infoSvg}</button>
- <div class="chart-hint-popup" id="chartHintPopup">Tap any row to filter the graph above · Shift-click for a range</div>
+ <div class="chart-hint-popup" id="chartHintPopup"><div>Tap any row to filter the graph above · Shift-click for a range</div><div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><div style="margin-bottom:4px;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Sleep marks under chart</div><div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;width:4px;height:8px;background:var(--c-bpm);border-radius:1px"></span><span>@GoodSleep day</span></div><div style="display:flex;align-items:center;gap:6px"><span style="display:inline-block;width:4px;height:8px;background:var(--orange);border-radius:1px"></span><span>@PoorSleep day</span></div></div></div>
  </div>
  </div>
  </div>
@@ -4885,6 +4885,26 @@ checkOnboarding();
 ═══════════════════════════════════════════════════════════════════════════════
 CHANGELOG
 ═══════════════════════════════════════════════════════════════════════════════
+
+v7.05 — 2026-07-18 — Sleep overlay legend added to the existing chart info
+ popup. The ⓘ button in the chart-controls row now shows BOTH the
+ row-filter hint and a small color-swatch legend explaining what the
+ green and orange bars at the bottom of the chart mean.
+ • Extended the #chartHintPopup content: original row-filter line
+ stays as the first section; new "Sleep marks under chart" section
+ below a divider shows a tiny green swatch labeled "@GoodSleep day"
+ and a tiny orange swatch labeled "@PoorSleep day". Swatches use
+ the same colors as the actual bars (var(--c-bpm), var(--orange)).
+ • Switched .chart-hint-popup CSS from text-align:right to
+ text-align:left because the added legend reads better left-aligned.
+ The original hint line stays fully readable.
+ • Reused the existing ⓘ button and toggle mechanism — no new UI
+ controls, no new tap targets. Discoverability comes through the
+ existing "how does this chart work" affordance rather than
+ requiring users to figure out that the tiny bars mean something.
+ • Legend swatches (4×8 px) match the actual bar dimensions on the
+ chart so the visual language is consistent between the legend
+ and the marks it explains.
 
 v7.04 — 2026-07-18 — Sleep-quality overlay on the chart. Small colored bars
  appear at the bottom of the plot area under readings from days tagged
